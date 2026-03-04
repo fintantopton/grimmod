@@ -322,7 +322,11 @@ pub struct Vector<T> {
 
 impl<T: Sized> Vector<T> {
     pub unsafe fn data(&self) -> &[T] {
-        std::slice::from_raw_parts(self.start, self.len())
+        if self.start.is_null() {
+            &[]
+        } else {
+            std::slice::from_raw_parts(self.start, self.len())
+        }
     }
 
     pub fn len(&self) -> usize {
