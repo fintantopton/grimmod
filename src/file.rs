@@ -26,9 +26,13 @@ pub fn find_modded(filename: &str) -> Option<PathBuf> {
 
 /// Enhances the game's open file function, opening modded files if found
 pub extern "C" fn open(raw_filename: *mut c_char, mode: *mut c_char) -> *mut c_void {
-    let Ok(filename) = unsafe { CStr::from_ptr(raw_filename) }.to_str() else {
+    let Ok(filename) = (unsafe { CStr::from_ptr(raw_filename) }).to_str() else {
         return std::ptr::null_mut();
     };
+
+    if debug::verbose() {
+        debug::info(format!("File open: '{}'", filename));
+    }
 
     match find_modded(filename) {
         None => grim::open_file(raw_filename, mode),
@@ -39,6 +43,11 @@ pub extern "C" fn open(raw_filename: *mut c_char, mode: *mut c_char) -> *mut c_v
 
             let raw_path = CString::new(path.to_str().unwrap()).unwrap().into_raw();
             let file = unsafe { fopen(raw_path, mode) };
+
+            // Reclaim the CString to avoid memory leak
+            unsafe {
+                let _ = CString::from_raw(raw_path);
+            }
 
             HANDLES.lock().unwrap().insert(file as usize);
 

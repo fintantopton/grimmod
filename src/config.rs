@@ -40,7 +40,12 @@ impl Config {
 
 #[derive(Clone, serde::Deserialize)]
 pub struct Display {
+    /// HDPI fix — Windows-only, ignored on Linux.
+    #[cfg(target_os = "windows")]
     #[serde(default = "default_true")]
+    pub hdpi_fix: bool,
+    #[cfg(target_os = "linux")]
+    #[serde(default = "default_false")]
     pub hdpi_fix: bool,
     #[serde(default = "default_true")]
     pub vsync: bool,
@@ -49,7 +54,10 @@ pub struct Display {
 impl Display {
     pub fn new() -> Display {
         Display {
+            #[cfg(target_os = "windows")]
             hdpi_fix: true,
+            #[cfg(target_os = "linux")]
+            hdpi_fix: false,
             vsync: true,
         }
     }

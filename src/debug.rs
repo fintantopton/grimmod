@@ -22,6 +22,10 @@ pub fn write<T: AsRef<str>>(message: T) -> Option<()> {
         return None;
     }
 
+    // On Linux, also print to stderr for easy debugging under LD_PRELOAD
+    #[cfg(target_os = "linux")]
+    eprintln!("[grimmod] {}", message.as_ref());
+
     if let Some(mut log_file) = LOG_FILE.as_ref() {
         writeln!(log_file, "{}", message.as_ref()).ok()?;
     }
@@ -30,6 +34,14 @@ pub fn write<T: AsRef<str>>(message: T) -> Option<()> {
 
 pub fn info<T: AsRef<str>>(message: T) -> Option<()> {
     write(format!("[INFO] {}", message.as_ref()))
+}
+
+/// Debug-level messages — only logged when `logging.debug = true` in grimmod.toml.
+pub fn debug<T: AsRef<str>>(message: T) -> Option<()> {
+    if !verbose() {
+        return None;
+    }
+    write(format!("[DEBUG] {}", message.as_ref()))
 }
 
 pub fn error<T: AsRef<str>>(message: T) -> Option<()> {

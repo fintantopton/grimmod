@@ -4,6 +4,11 @@ use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 
+#[cfg(target_os = "linux")]
+use std::fs::File;
+#[cfg(target_os = "linux")]
+use std::io::BufReader;
+
 use crate::config::Config;
 use crate::renderer::graphics::{
     Image, ImageAddr, ImageContainer, ImageContainerAddr, SurfaceAddr, OVERLAYS,
@@ -17,6 +22,84 @@ pub static BACKGROUND_WRITES: Lazy<Mutex<BackgroundWrites>> =
 pub static TARGET: Mutex<Option<Target>> = Mutex::new(None);
 
 pub static HQ_IMAGES: Lazy<Mutex<Vec<HqImageContainer>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+/// Opens a PNG file with lenient CRC/checksum handling.
+/// The GrimHD mod PNG files have invalid IDAT CRC checksums, so we must
+/// use the `png` crate directly with `ignore_checksums(true)`.
+#[cfg(target_os = "linux")]
+fn open_png_lenient(path: &Path) -> Result<(Vec<u8>, u32, u32, bool), String> {
+    let file = File::open(path).map_err(|e| format!("open: {}", e))?;
+    let mut decoder = png::Decoder::new(BufReader::new(file));
+    decoder.ignore_checksums(true);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("read_info: {}", e))?;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("next_frame: {}", e))?;
+    buf.truncate(info.buffer_size());
+
+    let width = info.width;
+    let height = info.height;
+    let has_alpha = matches!(
+        info.color_type,
+        png::ColorType::Rgba | png::ColorType::GrayscaleAlpha
+    );
+
+    // Convert to RGBA8 if needed
+    let rgba_buf = match info.color_type {
+        png::ColorType::Rgba => buf,
+        png::ColorType::Rgb => {
+            let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+            for chunk in buf.chunks(3) {
+                rgba.push(chunk[0]);
+                rgba.push(chunk[1]);
+                rgba.push(chunk[2]);
+                rgba.push(255);
+            }
+            rgba
+        }
+        png::ColorType::GrayscaleAlpha => {
+            let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+            for chunk in buf.chunks(2) {
+                rgba.push(chunk[0]);
+                rgba.push(chunk[0]);
+                rgba.push(chunk[0]);
+                rgba.push(chunk[1]);
+            }
+            rgba
+        }
+        png::ColorType::Grayscale => {
+            let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+            for &byte in &buf {
+                rgba.push(byte);
+                rgba.push(byte);
+                rgba.push(byte);
+                rgba.push(255);
+            }
+            rgba
+        }
+        png::ColorType::Indexed => {
+            return Err(format!("indexed color PNG not supported"));
+        }
+    };
+
+    Ok((rgba_buf, width, height, has_alpha))
+}
+
+/// Gets image dimensions using the png crate with lenient CRC handling.
+#[cfg(target_os = "linux")]
+fn png_dimensions(path: &Path) -> Result<(u32, u32), String> {
+    let file = File::open(path).map_err(|e| format!("open: {}", e))?;
+    let mut decoder = png::Decoder::new(BufReader::new(file));
+    decoder.ignore_checksums(true);
+    let reader = decoder
+        .read_info()
+        .map_err(|e| format!("read_info: {}", e))?;
+    let info = reader.info();
+    Ok((info.width, info.height))
+}
 
 #[derive(Debug)]
 pub enum Target {
@@ -94,6 +177,7 @@ impl HqImageContainer {
 }
 
 impl HqImage {
+    #[cfg(target_os = "windows")]
     fn open_image(name: &str, images: &[&Image]) -> Option<Vec<HqImage>> {
         let path = file::find_modded(&format!("{}.png", name))?;
         if images.len() != 1 {
@@ -114,6 +198,59 @@ impl HqImage {
                 let buffer = png.to_rgba8().into_vec();
                 data_clone.loaded(buffer, has_alpha);
             } else {
+                data_clone.failed();
+            }
+        });
+
+        Some(vec![HqImage {
+            name: name.to_string(),
+            index: 0,
+            width,
+            height,
+            scale: width / image.width as u32,
+            original_addr: image.addr,
+            data,
+        }])
+    }
+
+    #[cfg(target_os = "linux")]
+    fn open_image(name: &str, images: &[&Image]) -> Option<Vec<HqImage>> {
+        let path = file::find_modded(&format!("{}.png", name))?;
+        if images.len() != 1 {
+            debug::error(format!(
+                "tried to open {} as image, should be animation",
+                name
+            ));
+            return None;
+        }
+        let image = images.first()?;
+        let (width, height) = png_dimensions(&path).ok()?;
+        let data = HqImageAsyncData::new();
+
+        let mut data_clone = data.clone();
+        let name_for_thread = name.to_string();
+        let path_for_thread = path.clone();
+        thread::spawn(move || match open_png_lenient(&path_for_thread) {
+            Ok((buffer, w, h, has_alpha)) => {
+                if debug::verbose() {
+                    debug::info(format!(
+                        "PNG loaded: '{}', {}x{}, buffer_len={}, has_alpha={}",
+                        name_for_thread,
+                        w,
+                        h,
+                        buffer.len(),
+                        has_alpha
+                    ));
+                }
+                data_clone.loaded(buffer, has_alpha);
+            }
+            Err(e) => {
+                debug::error(format!(
+                    "Failed to load PNG '{}' from '{}': {}",
+                    name_for_thread,
+                    path_for_thread.display(),
+                    e
+                ));
                 data_clone.failed();
             }
         });
@@ -315,8 +452,8 @@ impl Background {
     }
 
     fn set_from_image(image_addr: ImageAddr, hq_images: &mut MutexGuard<Vec<HqImageContainer>>) {
-        *BACKGROUND.lock().unwrap() =
-            HqImage::map_loaded(image_addr, hq_images, HqImage::to_background_mut);
+        let bg = HqImage::map_loaded(image_addr, hq_images, HqImage::to_background_mut);
+        *BACKGROUND.lock().unwrap() = bg;
         *BACKGROUND_WRITES.lock().unwrap() = HashMap::new();
     }
 
@@ -332,9 +469,10 @@ impl Background {
     }
 
     pub fn is_stencilled_video_scene() -> bool {
-        if Config::get().renderer.video_cutouts
-            && let Some(background) = BACKGROUND.lock().unwrap().as_ref()
-        {
+        if !Config::get().renderer.video_cutouts {
+            return false;
+        }
+        if let Some(background) = BACKGROUND.lock().unwrap().as_ref() {
             video_cutouts::triangles_for(&background.name).is_some()
         } else {
             false
@@ -452,8 +590,10 @@ pub fn with_target_hq_image<F: FnMut(TargetMut)>(mut f: F) {
     let mut background = BACKGROUND.lock().unwrap();
     let mut hq_images = HQ_IMAGES.lock().unwrap();
     match TARGET.lock().unwrap().as_mut() {
-        Some(Target::Background) if let Some(background) = background.as_mut() => {
-            f(TargetMut::Background(background))
+        Some(Target::Background) => {
+            if let Some(background) = background.as_mut() {
+                f(TargetMut::Background(background))
+            }
         }
         Some(Target::Image(image_addr)) => HqImage::with_loaded_or_else(
             *image_addr,

@@ -59,8 +59,17 @@ impl ImageAddr {
         self.0 == unsafe { grim::CLEAN_Z_BUFFER.inner_addr() }
     }
 
+    /// Windows: BACK_BUFFER IS the image, so use .addr()
+    /// Linux: BACK_BUFFER is a pointer to the image, so use .inner_addr()
     pub fn is_back_buffer(&self) -> bool {
-        self.0 == unsafe { grim::BACK_BUFFER.addr() }
+        #[cfg(target_os = "windows")]
+        {
+            self.0 == unsafe { grim::BACK_BUFFER.addr() }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            self.0 == unsafe { grim::BACK_BUFFER.inner_addr() }
+        }
     }
 
     pub fn is_smush_buffer(&self) -> bool {
@@ -97,11 +106,9 @@ impl SurfaceAddr {
     /// Return the address for the background render pass's surface
     pub fn bitmap_underlays() -> Option<SurfaceAddr> {
         unsafe {
-            let render_pass = grim::BITMAP_UNDERLAYS_RENDER_PASS.inner_ref();
-            let render_pass_data =
-                render_pass.and_then(|render_pass| render_pass.entities.data().first());
-            let surface = render_pass_data.map(|render_pass_data| render_pass_data.surface);
-            surface.map(SurfaceAddr::from_ptr)
+            let render_pass = grim::BITMAP_UNDERLAYS_RENDER_PASS.inner_ref()?;
+            let entity = render_pass.entities.data().first()?;
+            Some(SurfaceAddr::from_ptr(entity.surface))
         }
     }
 
@@ -351,7 +358,19 @@ pub extern "C" fn bind_image_surface(
 }
 
 /// Hooks texture deletion to clear out any bound HQ overlays
+///
+/// Windows: stdcall calling convention (GL functions are stdcall on Windows)
+/// Linux: C calling convention
+#[cfg(target_os = "windows")]
 pub extern "stdcall" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint) {
+    let surface_addr = SurfaceAddr(textures as usize - 0x20);
+    OVERLAYS.lock().unwrap().remove(&surface_addr);
+
+    gl::delete_textures(n, textures);
+}
+
+#[cfg(target_os = "linux")]
+pub extern "C" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint) {
     let surface_addr = SurfaceAddr(textures as usize - 0x20);
     OVERLAYS.lock().unwrap().remove(&surface_addr);
 
@@ -412,8 +431,24 @@ pub extern "C" fn draw_indexed_primitives(
     grim::draw_indexed_primitives(draw, param_2, param_3, param_4, param_5)
 }
 
-/// Hooks the the opengl draw call for videos to perform a stencil test for cutouts
+/// Hooks the opengl draw call for videos to perform a stencil test for cutouts
+#[cfg(target_os = "windows")]
 pub extern "stdcall" fn draw_elements_base_vertex(
+    mode: gl::Enum,
+    count: gl::Sizei,
+    typ: gl::Enum,
+    indicies: *mut c_void,
+    basevertex: gl::Int,
+) {
+    video_cutouts::with_stencil(|| {
+        gl::draw_elements_base_vertex(mode, count, typ, indicies, basevertex);
+    });
+
+    gl::draw_elements_base_vertex.unhook().ok();
+}
+
+#[cfg(target_os = "linux")]
+pub extern "C" fn draw_elements_base_vertex(
     mode: gl::Enum,
     count: gl::Sizei,
     typ: gl::Enum,
@@ -461,6 +496,8 @@ pub extern "C" fn surface_upload(surface: *mut grim::Surface, image_data: *mut c
     *image::TARGET.lock().unwrap() = None;
 }
 
+/// Sub-hook for glTexImage2D — replaces texture data with HQ version.
+#[cfg(target_os = "windows")]
 extern "stdcall" fn hq_tex_image_2d(
     _target: gl::Enum,
     _level: gl::Int,
@@ -501,7 +538,65 @@ extern "stdcall" fn hq_tex_image_2d(
     })
 }
 
+#[cfg(target_os = "linux")]
+extern "C" fn hq_tex_image_2d(
+    _target: gl::Enum,
+    _level: gl::Int,
+    _internalformat: gl::Int,
+    _width: gl::Sizei,
+    _height: gl::Sizei,
+    _border: gl::Int,
+    _format: gl::Enum,
+    _typ: gl::Enum,
+    _data: *const c_void,
+) {
+    fn tex_image_2d(width: u32, height: u32, ptr: *const u8) {
+        gl::tex_image_2d(
+            gl::TEXTURE_2D,
+            0,
+            gl::RGBA8 as gl::Int,
+            width as gl::Int,
+            height as gl::Int,
+            0,
+            gl::RGBA,
+            gl::UNSIGNED_BYTE,
+            ptr as *const _,
+        );
+    }
+    image::with_target_hq_image(|target_ref| match target_ref {
+        image::TargetMut::Background(background) => tex_image_2d(
+            background.width,
+            background.height,
+            background.buffer.as_ptr(),
+        ),
+        image::TargetMut::Image(hq_image) => {
+            let width = hq_image.width;
+            let height = hq_image.height;
+            hq_image
+                .data
+                .get_or_wait(|buffer, _| tex_image_2d(width, height, buffer.as_ptr()));
+        }
+    })
+}
+
+/// Sub-hook for glPixelStorei — adjusts row length for HQ image width.
+#[cfg(target_os = "windows")]
 extern "stdcall" fn hq_pixel_storei(pname: gl::Enum, param: gl::Int) {
+    image::with_target_hq_image(|target_ref| {
+        if pname == gl::UNPACK_ROW_LENGTH {
+            let width = match target_ref {
+                image::TargetMut::Background(background) => background.width,
+                image::TargetMut::Image(hq_image) => hq_image.width,
+            };
+            gl::pixel_storei(gl::UNPACK_ROW_LENGTH, width as gl::Int);
+        } else {
+            gl::pixel_storei(pname, param);
+        }
+    })
+}
+
+#[cfg(target_os = "linux")]
+extern "C" fn hq_pixel_storei(pname: gl::Enum, param: gl::Int) {
     image::with_target_hq_image(|target_ref| {
         if pname == gl::UNPACK_ROW_LENGTH {
             let width = match target_ref {
@@ -537,6 +632,8 @@ pub extern "C" fn render_scene(
     }
 }
 
+/// Sub-hook for glSamplerParameteri — forces LINEAR filtering.
+#[cfg(target_os = "windows")]
 pub extern "stdcall" fn forced_linear_sampler_parameteri(
     target: gl::Enum,
     pname: gl::Enum,
@@ -549,7 +646,45 @@ pub extern "stdcall" fn forced_linear_sampler_parameteri(
     }
 }
 
+#[cfg(target_os = "linux")]
+pub extern "C" fn forced_linear_sampler_parameteri(
+    target: gl::Enum,
+    pname: gl::Enum,
+    param: gl::Int,
+) {
+    if pname == gl::TEXTURE_MIN_FILTER || pname == gl::TEXTURE_MAG_FILTER {
+        gl::sampler_parameteri(target, pname, gl::LINEAR as gl::Int);
+    } else {
+        gl::sampler_parameteri(target, pname, param);
+    }
+}
+
+/// Hooks compressed texture uploads — passes through to the ARB version.
+#[cfg(target_os = "windows")]
 pub extern "stdcall" fn compressed_tex_image2d(
+    target: gl::Enum,
+    level: gl::Int,
+    internalformat: gl::Enum,
+    width: gl::Sizei,
+    height: gl::Sizei,
+    border: gl::Int,
+    image_size: gl::Sizei,
+    data: *const c_void,
+) {
+    gl::compressed_tex_image2d(
+        target,
+        level,
+        internalformat,
+        width,
+        height,
+        border,
+        image_size,
+        data,
+    );
+}
+
+#[cfg(target_os = "linux")]
+pub extern "C" fn compressed_tex_image2d(
     target: gl::Enum,
     level: gl::Int,
     internalformat: gl::Enum,
