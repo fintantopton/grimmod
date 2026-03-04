@@ -40,9 +40,7 @@ indirect_fns! {
     #[symbol(glEnable)]
     extern "stdcall" fn enable(cap: Enum);
 
-    // NOTE: Windows upstream has glEnable for both enable and disable (bug).
-    // This is kept as-is to match the original Windows behavior.
-    #[symbol(glEnable)]
+    #[symbol(glDisable)]
     extern "stdcall" fn disable(cap: Enum);
 
     #[symbol(glColorMask)]

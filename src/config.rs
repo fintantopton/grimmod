@@ -1,38 +1,40 @@
 use once_cell::sync::Lazy;
 
-pub static CONFIG: Lazy<Config> = Lazy::new(Config::load);
+static CONFIG: Lazy<Config> = Lazy::new(Config::load);
 
 #[derive(Clone, serde::Deserialize)]
 pub struct Config {
     #[serde(default = "default_true")]
     pub mods: bool,
-    #[serde(default = "Renderer::new")]
+    #[serde(default)]
     pub renderer: Renderer,
-    #[serde(default = "Display::new")]
+    #[serde(default)]
     pub display: Display,
-    #[serde(default = "Logging::new")]
+    #[serde(default)]
     pub logging: Logging,
 }
 
-impl Config {
-    pub fn new() -> Config {
+impl Default for Config {
+    fn default() -> Config {
         Config {
             mods: true,
-            renderer: Renderer::new(),
-            display: Display::new(),
-            logging: Logging::new(),
+            renderer: Renderer::default(),
+            display: Display::default(),
+            logging: Logging::default(),
         }
     }
+}
 
-    pub fn get() -> Config {
-        CONFIG.clone()
+impl Config {
+    pub fn get() -> &'static Config {
+        &CONFIG
     }
 
-    pub fn load() -> Config {
-        Config::try_load().unwrap_or_else(Config::new)
+    fn load() -> Config {
+        Config::try_load().unwrap_or_default()
     }
 
-    pub fn try_load() -> Option<Config> {
+    fn try_load() -> Option<Config> {
         let contents = std::fs::read_to_string("grimmod.toml").ok()?;
         toml::from_str(&contents).ok()?
     }
@@ -51,8 +53,8 @@ pub struct Display {
     pub vsync: bool,
 }
 
-impl Display {
-    pub fn new() -> Display {
+impl Default for Display {
+    fn default() -> Display {
         Display {
             #[cfg(target_os = "windows")]
             hdpi_fix: true,
@@ -73,8 +75,8 @@ pub struct Renderer {
     pub video_cutouts: bool,
 }
 
-impl Renderer {
-    pub fn new() -> Renderer {
+impl Default for Renderer {
+    fn default() -> Renderer {
         Renderer {
             hq_assets: true,
             quick_toggle: true,
@@ -91,8 +93,8 @@ pub struct Logging {
     pub debug: bool,
 }
 
-impl Logging {
-    pub fn new() -> Logging {
+impl Default for Logging {
+    fn default() -> Logging {
         Logging {
             enabled: true,
             debug: false,

@@ -41,7 +41,10 @@ impl ImageAddr {
     /// Gets the original image address before decompression
     pub fn original(&self) -> ImageAddr {
         if self.is_decompression_buffer() {
-            DECOMPRESSED.lock().unwrap().unwrap_or(*self)
+            DECOMPRESSED
+                .lock()
+                .expect("DECOMPRESSED lock poisoned")
+                .unwrap_or(*self)
         } else {
             *self
         }
@@ -146,8 +149,8 @@ impl<'a> ImageContainer<'a> {
         cstr.to_str().unwrap_or("")
     }
 
-    pub fn images(&self) -> Vec<&Image> {
-        self.images.iter().collect()
+    pub fn images(&self) -> &[Image] {
+        &self.images
     }
 
     pub fn image_addrs(&self) -> Vec<ImageAddr> {
@@ -198,18 +201,25 @@ impl Draw {
     }
 
     pub fn is_hq(&self) -> bool {
-        (self.surface.is_bitmap_underlays() && image::BACKGROUND.lock().unwrap().is_some())
-            || OVERLAYS.lock().unwrap().contains_key(&self.surface)
+        (self.surface.is_bitmap_underlays()
+            && image::BACKGROUND
+                .lock()
+                .expect("BACKGROUND lock poisoned")
+                .is_some())
+            || OVERLAYS
+                .lock()
+                .expect("OVERLAYS lock poisoned")
+                .contains_key(&self.surface)
     }
 
     pub fn is_smush(&self) -> bool {
-        Some(self.surface) == *SMUSH_SURFACE.lock().unwrap()
+        Some(self.surface) == *SMUSH_SURFACE.lock().expect("SMUSH_SURFACE lock poisoned")
     }
 }
 
 /// Removes all HQ overlay pairs owned by dropped HQ container
 pub fn unpair_overlay_surfaces(hq_image_container: &image::HqImageContainer) {
-    let mut overlays = OVERLAYS.lock().unwrap();
+    let mut overlays = OVERLAYS.lock().expect("OVERLAYS lock poisoned");
     for hq_image in hq_image_container.images.iter() {
         overlays.retain(|_, image_addr| image_addr != &hq_image.original_addr);
     }
@@ -259,7 +269,7 @@ pub extern "C" fn decompress_image(image: *const grim::Image) {
 
     // store the address of the last image decompressed
     // it will shortly be copied to the clean buffer and rendered
-    *DECOMPRESSED.lock().unwrap() = Some(ImageAddr::from_ptr(image));
+    *DECOMPRESSED.lock().expect("DECOMPRESSED lock poisoned") = Some(ImageAddr::from_ptr(image));
 
     grim::decompress_image(image)
 }
@@ -309,7 +319,7 @@ pub extern "C" fn copy_image(
             && active_smush_frame_size() == Some((640, 480))
             && !image::Background::is_stencilled_video_scene()
         {
-            *image::BACKGROUND.lock().unwrap() = None;
+            *image::BACKGROUND.lock().expect("BACKGROUND lock poisoned") = None;
         }
     }
 
@@ -338,7 +348,7 @@ pub extern "C" fn bind_image_surface(
     let surface_addr = SurfaceAddr::from_ptr(surface);
 
     if image_addr.is_smush_buffer() {
-        *SMUSH_SURFACE.lock().unwrap() = Some(surface_addr);
+        *SMUSH_SURFACE.lock().expect("SMUSH_SURFACE lock poisoned") = Some(surface_addr);
     }
 
     if is_hq {
@@ -349,9 +359,15 @@ pub extern "C" fn bind_image_surface(
                 surface_addr.0
             ));
         }
-        OVERLAYS.lock().unwrap().insert(surface_addr, image_addr);
+        OVERLAYS
+            .lock()
+            .expect("OVERLAYS lock poisoned")
+            .insert(surface_addr, image_addr);
     } else {
-        OVERLAYS.lock().unwrap().remove(&surface_addr);
+        OVERLAYS
+            .lock()
+            .expect("OVERLAYS lock poisoned")
+            .remove(&surface_addr);
     }
 
     surface
@@ -364,7 +380,10 @@ pub extern "C" fn bind_image_surface(
 #[cfg(target_os = "windows")]
 pub extern "stdcall" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint) {
     let surface_addr = SurfaceAddr(textures as usize - 0x20);
-    OVERLAYS.lock().unwrap().remove(&surface_addr);
+    OVERLAYS
+        .lock()
+        .expect("OVERLAYS lock poisoned")
+        .remove(&surface_addr);
 
     gl::delete_textures(n, textures);
 }
@@ -372,7 +391,10 @@ pub extern "stdcall" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint)
 #[cfg(target_os = "linux")]
 pub extern "C" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint) {
     let surface_addr = SurfaceAddr(textures as usize - 0x20);
-    OVERLAYS.lock().unwrap().remove(&surface_addr);
+    OVERLAYS
+        .lock()
+        .expect("OVERLAYS lock poisoned")
+        .remove(&surface_addr);
 
     gl::delete_textures(n, textures);
 }
@@ -423,9 +445,11 @@ pub extern "C" fn draw_indexed_primitives(
     if image::Background::is_stencilled_video_scene()
         && Draw::from_raw(draw).map_or(false, |draw| draw.is_smush())
     {
-        gl::draw_elements_base_vertex
+        if let Err(e) = gl::draw_elements_base_vertex
             .hook(draw_elements_base_vertex as gl::DrawElementsBaseVertex)
-            .ok();
+        {
+            debug::error(format!("Failed to hook draw_elements_base_vertex: {}", e));
+        }
     }
 
     grim::draw_indexed_primitives(draw, param_2, param_3, param_4, param_5)
@@ -444,7 +468,9 @@ pub extern "stdcall" fn draw_elements_base_vertex(
         gl::draw_elements_base_vertex(mode, count, typ, indicies, basevertex);
     });
 
-    gl::draw_elements_base_vertex.unhook().ok();
+    if let Err(e) = gl::draw_elements_base_vertex.unhook() {
+        debug::error(format!("Failed to unhook draw_elements_base_vertex: {}", e));
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -459,7 +485,9 @@ pub extern "C" fn draw_elements_base_vertex(
         gl::draw_elements_base_vertex(mode, count, typ, indicies, basevertex);
     });
 
-    gl::draw_elements_base_vertex.unhook().ok();
+    if let Err(e) = gl::draw_elements_base_vertex.unhook() {
+        debug::error(format!("Failed to unhook draw_elements_base_vertex: {}", e));
+    }
 }
 
 /// Hooks texture uploads swap out regular assets for their HQ versions
@@ -481,19 +509,23 @@ pub extern "C" fn surface_upload(surface: *mut grim::Surface, image_data: *mut c
         return;
     }
 
-    *image::TARGET.lock().unwrap() = target;
-    gl::tex_image_2d
-        .hook(hq_tex_image_2d as gl::TexImage2d)
-        .ok();
-    gl::pixel_storei
-        .hook(hq_pixel_storei as gl::PixelStorei)
-        .ok();
+    *image::TARGET.lock().expect("TARGET lock poisoned") = target;
+    if let Err(e) = gl::tex_image_2d.hook(hq_tex_image_2d as gl::TexImage2d) {
+        debug::error(format!("Failed to hook tex_image_2d: {}", e));
+    }
+    if let Err(e) = gl::pixel_storei.hook(hq_pixel_storei as gl::PixelStorei) {
+        debug::error(format!("Failed to hook pixel_storei: {}", e));
+    }
 
     grim::surface_upload(surface, std::ptr::null_mut());
 
-    gl::pixel_storei.unhook().ok();
-    gl::tex_image_2d.unhook().ok();
-    *image::TARGET.lock().unwrap() = None;
+    if let Err(e) = gl::pixel_storei.unhook() {
+        debug::error(format!("Failed to unhook pixel_storei: {}", e));
+    }
+    if let Err(e) = gl::tex_image_2d.unhook() {
+        debug::error(format!("Failed to unhook tex_image_2d: {}", e));
+    }
+    *image::TARGET.lock().expect("TARGET lock poisoned") = None;
 }
 
 /// Sub-hook for glTexImage2D — replaces texture data with HQ version.
@@ -617,18 +649,18 @@ pub extern "C" fn render_scene(
     surface: *const grim::Surface,
     transition: f32,
 ) {
-    unsafe {
-        let value = if transition == 1.0 && Config::get().renderer.quick_toggle {
-            1.0
-        } else {
-            grim::RENDERING_MODE.get()
-        };
+    let value = if transition == 1.0 && Config::get().renderer.quick_toggle {
+        1.0
+    } else {
+        unsafe { grim::RENDERING_MODE.get() }
+    };
 
-        gl::sampler_parameteri
-            .hook(forced_linear_sampler_parameteri)
-            .ok();
-        grim::render_scene(draw, surface, value);
-        gl::sampler_parameteri.unhook().ok();
+    if let Err(e) = gl::sampler_parameteri.hook(forced_linear_sampler_parameteri) {
+        debug::error(format!("Failed to hook sampler_parameteri: {}", e));
+    }
+    grim::render_scene(draw, surface, value);
+    if let Err(e) = gl::sampler_parameteri.unhook() {
+        debug::error(format!("Failed to unhook sampler_parameteri: {}", e));
     }
 }
 

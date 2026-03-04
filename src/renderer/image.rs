@@ -136,8 +136,8 @@ impl HqImageContainer {
         }
         let name = Path::new(&filename).file_stem()?.to_str()?;
         let images = image_container.images();
-        let hq_images = HqImage::open_image(name, &images)
-            .or_else(|| HqImage::open_animation(name, &images))?;
+        let hq_images =
+            HqImage::open_image(name, images).or_else(|| HqImage::open_animation(name, images))?;
 
         if debug::verbose() {
             let addrs: Vec<_> = hq_images.iter().map(HqImage::format_addr).collect();
@@ -178,7 +178,7 @@ impl HqImageContainer {
 
 impl HqImage {
     #[cfg(target_os = "windows")]
-    fn open_image(name: &str, images: &[&Image]) -> Option<Vec<HqImage>> {
+    fn open_image(name: &str, images: &[Image]) -> Option<Vec<HqImage>> {
         let path = file::find_modded(&format!("{}.png", name))?;
         if images.len() != 1 {
             debug::error(format!(
@@ -214,7 +214,7 @@ impl HqImage {
     }
 
     #[cfg(target_os = "linux")]
-    fn open_image(name: &str, images: &[&Image]) -> Option<Vec<HqImage>> {
+    fn open_image(name: &str, images: &[Image]) -> Option<Vec<HqImage>> {
         let path = file::find_modded(&format!("{}.png", name))?;
         if images.len() != 1 {
             debug::error(format!(
@@ -266,7 +266,7 @@ impl HqImage {
         }])
     }
 
-    fn open_animation(name: &str, images: &[&Image]) -> Option<Vec<HqImage>> {
+    fn open_animation(name: &str, images: &[Image]) -> Option<Vec<HqImage>> {
         let path = file::find_modded(&format!("{}.mkv", name))?;
         let datas: Vec<_> = (0..images.len()).map(|_| HqImageAsyncData::new()).collect();
         let (width, height) = animation::open(path, datas.clone())?;

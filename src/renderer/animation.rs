@@ -46,7 +46,7 @@ impl Decoder {
         })
     }
 
-    pub fn decode<F>(&mut self, data: &Vec<u8>, f: F) -> Option<Vec<u8>>
+    pub fn decode<F>(&mut self, data: &[u8], f: F) -> Option<Vec<u8>>
     where
         F: Fn(&vpx_sys::vpx_image_t) -> Vec<u8>,
     {
@@ -55,7 +55,7 @@ impl Decoder {
             let data = block.raw_frame_data();
             (data.as_ptr(), data.len())
         } else {
-            (data.as_slice().as_ptr(), data.len())
+            (data.as_ptr(), data.len())
         };
         let decode_result = unsafe {
             vpx_sys::vpx_codec_decode(&mut self.codec, data, data_size as u32, null_mut(), 0)
@@ -151,7 +151,7 @@ fn decode(path: &Path, datas: &mut impl Iterator<Item = HqImageAsyncData>) -> Op
             Ok(MatroskaSpec::BlockGroup(Master::End)) => {
                 block_id = 0;
                 let mut data = datas.next()?;
-                merge_alpha(&mut buffer, &mut alpha);
+                merge_alpha(&mut buffer, &alpha);
                 data.loaded(buffer, has_alpha);
                 buffer = Vec::new();
             }
@@ -162,7 +162,7 @@ fn decode(path: &Path, datas: &mut impl Iterator<Item = HqImageAsyncData>) -> Op
     Some(())
 }
 
-fn merge_alpha(rgba: &mut [u8], alpha: &mut [u8]) {
+fn merge_alpha(rgba: &mut [u8], alpha: &[u8]) {
     if rgba.len() == alpha.len() * 4 {
         for i in 0..alpha.len() {
             rgba[i * 4 + 3] = alpha[i];

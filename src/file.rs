@@ -21,7 +21,7 @@ extern "C" {
 /// Finds the path to a modded resource, if one exists
 pub fn find_modded(filename: &str) -> Option<PathBuf> {
     let mut entries = glob(&format!("./Mods/*/assets/*/{}", filename.to_lowercase())).ok()?;
-    entries.next().map(Result::unwrap)
+    entries.next().and_then(Result::ok)
 }
 
 /// Enhances the game's open file function, opening modded files if found
@@ -41,15 +41,21 @@ pub extern "C" fn open(raw_filename: *mut c_char, mode: *mut c_char) -> *mut c_v
                 debug::info(format!("Opening modded {} file", path.display()));
             }
 
-            let raw_path = CString::new(path.to_str().unwrap()).unwrap().into_raw();
-            let file = unsafe { fopen(raw_path, mode) };
+            let Some(path_str) = path.to_str() else {
+                debug::error(format!("Non-UTF-8 path: {}", path.display()));
+                return grim::open_file(raw_filename, mode);
+            };
+            let Ok(c_path) = CString::new(path_str) else {
+                debug::error(format!("Path contains null byte: {}", path.display()));
+                return grim::open_file(raw_filename, mode);
+            };
 
-            // Reclaim the CString to avoid memory leak
-            unsafe {
-                let _ = CString::from_raw(raw_path);
-            }
+            let file = unsafe { fopen(c_path.as_ptr(), mode) };
 
-            HANDLES.lock().unwrap().insert(file as usize);
+            HANDLES
+                .lock()
+                .expect("HANDLES lock poisoned")
+                .insert(file as usize);
 
             file
         }
@@ -59,12 +65,14 @@ pub extern "C" fn open(raw_filename: *mut c_char, mode: *mut c_char) -> *mut c_v
 /// Closes original or modded files
 pub extern "C" fn close(file: *mut c_void) -> i32 {
     let handle = file as usize;
-    let modded = HANDLES.lock().unwrap().contains(&handle);
+    let modded = HANDLES
+        .lock()
+        .expect("HANDLES lock poisoned")
+        .remove(&handle);
 
     if !modded {
         grim::close_file(file)
     } else {
-        HANDLES.lock().unwrap().remove(&handle);
         unsafe { fclose(file) }
     }
 }
@@ -72,7 +80,10 @@ pub extern "C" fn close(file: *mut c_void) -> i32 {
 /// Reads from original or modded files
 pub extern "C" fn read(file: *mut c_void, dst: *mut c_void, size: usize) -> usize {
     let handle = file as usize;
-    let modded = HANDLES.lock().unwrap().contains(&handle);
+    let modded = HANDLES
+        .lock()
+        .expect("HANDLES lock poisoned")
+        .contains(&handle);
 
     if !modded {
         grim::read_file(file, dst, size)
