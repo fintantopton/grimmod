@@ -66,8 +66,8 @@ impl Decoder {
                     return None;
                 }
             };
-            let data = block.raw_frame_data();
-            (data.as_ptr(), data.len())
+            let frame_data = block.raw_frame_data();
+            (frame_data.as_ptr(), frame_data.len())
         } else {
             (data.as_ptr(), data.len())
         };
@@ -76,13 +76,24 @@ impl Decoder {
         };
 
         if decode_result != vpx_sys::VPX_CODEC_OK {
+            let detail = unsafe {
+                let ptr = vpx_sys::vpx_codec_error(&mut self.codec);
+                if ptr.is_null() {
+                    "unknown".to_string()
+                } else {
+                    std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned()
+                }
+            };
             debug::error(format!(
-                "vpx_codec_decode failed for {:?} stream (vpx error code {:?}, data size {})",
-                self.mode, decode_result, data_size
+                "vpx_codec_decode failed for {:?} stream (vpx error code {:?}, detail '{}', data size {})",
+                self.mode, decode_result, detail, data_size
             ));
             return None;
         }
 
+        // Reset iterator before each call to vpx_codec_get_frame so we
+        // retrieve the first (and only) image produced by the decode above.
+        self.vpx_iter = null();
         let image = unsafe { vpx_sys::vpx_codec_get_frame(&mut self.codec, &mut self.vpx_iter) };
         if image.is_null() {
             debug::error(format!(
