@@ -34,7 +34,12 @@ fn open_png_lenient(path: &Path) -> Result<(Vec<u8>, u32, u32, bool), String> {
     let mut reader = decoder
         .read_info()
         .map_err(|e| format!("read_info: {}", e))?;
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![
+        0u8;
+        reader
+            .output_buffer_size()
+            .ok_or_else(|| "output buffer size overflow".to_string())?
+    ];
     let info = reader
         .next_frame(&mut buf)
         .map_err(|e| format!("next_frame: {}", e))?;
