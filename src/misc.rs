@@ -1,8 +1,7 @@
 use glob::glob;
 use semver::{Version, VersionReq};
 use std::ffi::c_int;
-use std::fs::File;
-use std::io::Read;
+use std::fs;
 
 use crate::debug;
 use crate::raw::sdl;
@@ -25,12 +24,10 @@ pub fn validate_mods() {
         return;
     };
     for info_path in mod_infos {
-        let mut contents = String::new();
         let info: Option<ModInfo> = info_path
             .ok()
-            .and_then(|path| File::open(path).ok())
-            .and_then(|mut file| file.read_to_string(&mut contents).ok())
-            .and_then(|_| serde_json::from_str(&contents).ok());
+            .and_then(|path| fs::read_to_string(path).ok())
+            .and_then(|contents| serde_json::from_str(&contents).ok());
 
         if let Some(info) = info {
             if info.grimmod_version.matches(&VERSION) {

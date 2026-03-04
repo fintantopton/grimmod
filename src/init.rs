@@ -97,7 +97,7 @@ fn post_graphics_startup() -> Result<(), String> {
     Ok(())
 }
 
-pub fn init_hooks() -> Result<(), HookError> {
+fn init_hooks() -> Result<(), HookError> {
     always_on_hooks()?;
     mods_hooks()?;
     hq_assets_hooks()?;
@@ -149,7 +149,7 @@ pub extern "C" fn init_renderers() {
 }
 
 /// Some functions need to be hooked always
-pub fn always_on_hooks() -> Result<(), HookError> {
+fn always_on_hooks() -> Result<(), HookError> {
     grim::init_renderers.hook(init_renderers)?;
     grim::render_scene.hook(graphics::render_scene as grim::RenderScene)?;
 
@@ -157,7 +157,7 @@ pub fn always_on_hooks() -> Result<(), HookError> {
 }
 
 /// Overload native IO functions to load modded files
-pub fn mods_hooks() -> Result<(), HookError> {
+fn mods_hooks() -> Result<(), HookError> {
     if !Config::get().mods {
         return Ok(());
     }
@@ -170,7 +170,7 @@ pub fn mods_hooks() -> Result<(), HookError> {
 }
 
 /// Upgrade image loading and display pipeline to enable HD 32bit assets
-pub fn hq_assets_hooks() -> Result<(), HookError> {
+fn hq_assets_hooks() -> Result<(), HookError> {
     if !Config::get().mods || !Config::get().renderer.hq_assets {
         return Ok(());
     }
@@ -193,7 +193,7 @@ pub fn hq_assets_hooks() -> Result<(), HookError> {
 }
 
 /// Force VSync to be always on
-pub fn vsync_hooks() -> Result<(), HookError> {
+fn vsync_hooks() -> Result<(), HookError> {
     if !Config::get().display.vsync {
         return Ok(());
     }
@@ -205,7 +205,7 @@ pub fn vsync_hooks() -> Result<(), HookError> {
 
 /// Render game at native resolution even on HDPI screens (Windows only)
 #[cfg(target_os = "windows")]
-pub fn hdpi_fix_hooks() -> Result<(), HookError> {
+fn hdpi_fix_hooks() -> Result<(), HookError> {
     if !Config::get().display.hdpi_fix {
         return Ok(());
     }

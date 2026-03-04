@@ -153,7 +153,7 @@ impl HqImageContainer {
 
     pub fn load(image_container: &ImageContainer) -> Option<HqImageContainer> {
         let hq_image_container = HqImageContainer::open(image_container)?;
-        let mut hq_image_containers = HQ_IMAGES.lock().unwrap();
+        let mut hq_image_containers = HQ_IMAGES.lock().expect("HQ_IMAGES lock poisoned");
         let image_addrs = image_container.image_addrs();
         let existing_index = hq_image_containers.iter().position(|hq_image_container| {
             hq_image_container
@@ -168,7 +168,7 @@ impl HqImageContainer {
     }
 
     pub fn unload(image_container_addr: ImageContainerAddr) -> Option<HqImageContainer> {
-        let mut hq_image_containers = HQ_IMAGES.lock().unwrap();
+        let mut hq_image_containers = HQ_IMAGES.lock().expect("HQ_IMAGES lock poisoned");
         let index = hq_image_containers.iter().position(|hq_image_container| {
             hq_image_container.original_addr == image_container_addr
         });
@@ -290,13 +290,15 @@ impl HqImage {
     }
 
     pub fn name(image_addr: ImageAddr) -> Option<String> {
-        HqImage::map_loaded(image_addr, &mut HQ_IMAGES.lock().unwrap(), |hq_image| {
-            Some(hq_image.name.clone())
-        })
+        HqImage::map_loaded(
+            image_addr,
+            &mut HQ_IMAGES.lock().expect("HQ_IMAGES lock poisoned"),
+            |hq_image| Some(hq_image.name.clone()),
+        )
     }
 
     pub fn is_loaded(addr: ImageAddr) -> bool {
-        let mut hq_images = HQ_IMAGES.lock().unwrap();
+        let mut hq_images = HQ_IMAGES.lock().expect("HQ_IMAGES lock poisoned");
         hq_images.iter_mut().any(|hq_image_container| {
             hq_image_container
                 .images
@@ -382,12 +384,13 @@ impl HqImageAsyncData {
     }
 
     pub fn loaded(&mut self, buffer: Vec<u8>, has_alpha: bool) {
-        *self.raw.0.lock().unwrap() = HqImageState::Loaded { buffer, has_alpha };
+        *self.raw.0.lock().expect("HqImageAsyncData lock poisoned") =
+            HqImageState::Loaded { buffer, has_alpha };
         self.raw.1.notify_all();
     }
 
     pub fn failed(&mut self) {
-        *self.raw.0.lock().unwrap() = HqImageState::Failed;
+        *self.raw.0.lock().expect("HqImageAsyncData lock poisoned") = HqImageState::Failed;
         self.raw.1.notify_all();
     }
 
@@ -395,9 +398,13 @@ impl HqImageAsyncData {
     where
         F: FnMut(&[u8], bool) -> R,
     {
-        let mut state = self.raw.0.lock().unwrap();
+        let mut state = self.raw.0.lock().expect("HqImageAsyncData lock poisoned");
         while matches!(*state, HqImageState::Loading) {
-            state = self.raw.1.wait(state).unwrap();
+            state = self
+                .raw
+                .1
+                .wait(state)
+                .expect("HqImageAsyncData lock poisoned");
         }
 
         match &*state {
@@ -426,11 +433,14 @@ impl Background {
                 let name = HqImage::name(image.addr).unwrap_or_default();
                 debug::info(format!("Setting {} as background", name));
             }
-            Background::set_from_image(image.addr, &mut HQ_IMAGES.lock().unwrap());
+            Background::set_from_image(
+                image.addr,
+                &mut HQ_IMAGES.lock().expect("HQ_IMAGES lock poisoned"),
+            );
         } else {
             HqImage::with_loaded_or_else(
                 image.addr,
-                &mut HQ_IMAGES.lock().unwrap(),
+                &mut HQ_IMAGES.lock().expect("HQ_IMAGES lock poisoned"),
                 |overlay| Background::animate(x, y, overlay),
                 |hq_images| {
                     Background::restore(x, y, hq_images);
@@ -440,7 +450,7 @@ impl Background {
     }
 
     fn animate(x: u32, y: u32, overlay: &mut HqImage) {
-        let mut background = BACKGROUND.lock().unwrap();
+        let mut background = BACKGROUND.lock().expect("BACKGROUND lock poisoned");
         if let Some(background) = background.as_mut() {
             // before writing the first frame of an animation, save a snapshot of the bg
             // this will be restored as the background once the animation ends
@@ -453,14 +463,20 @@ impl Background {
 
     fn set_from_image(image_addr: ImageAddr, hq_images: &mut MutexGuard<Vec<HqImageContainer>>) {
         let bg = HqImage::map_loaded(image_addr, hq_images, HqImage::to_background_mut);
-        *BACKGROUND.lock().unwrap() = bg;
-        *BACKGROUND_WRITES.lock().unwrap() = HashMap::new();
+        *BACKGROUND.lock().expect("BACKGROUND lock poisoned") = bg;
+        BACKGROUND_WRITES
+            .lock()
+            .expect("BACKGROUND_WRITES lock poisoned")
+            .clear();
     }
 
     fn restore(x: u32, y: u32, hq_images: &mut MutexGuard<Vec<HqImageContainer>>) -> Option<()> {
-        let mut background_guard = BACKGROUND.lock().unwrap();
+        let mut background_guard = BACKGROUND.lock().expect("BACKGROUND lock poisoned");
         let background = background_guard.as_mut()?;
-        let (width, height) = BACKGROUND_WRITES.lock().unwrap().remove(&(x, y))?;
+        let (width, height) = BACKGROUND_WRITES
+            .lock()
+            .expect("BACKGROUND_WRITES lock poisoned")
+            .remove(&(x, y))?;
 
         HqImage::map_loaded(background.original_addr, hq_images, |hq_background| {
             background.copy_from(hq_background, x, y, width, height);
@@ -472,7 +488,11 @@ impl Background {
         if !Config::get().renderer.video_cutouts {
             return false;
         }
-        if let Some(background) = BACKGROUND.lock().unwrap().as_ref() {
+        if let Some(background) = BACKGROUND
+            .lock()
+            .expect("BACKGROUND lock poisoned")
+            .as_ref()
+        {
             video_cutouts::triangles_for(&background.name).is_some()
         } else {
             false
@@ -587,9 +607,9 @@ pub fn get_target(surface_addr: SurfaceAddr) -> Option<Target> {
 }
 
 pub fn with_target_hq_image<F: FnMut(TargetMut)>(mut f: F) {
-    let mut background = BACKGROUND.lock().unwrap();
-    let mut hq_images = HQ_IMAGES.lock().unwrap();
-    match TARGET.lock().unwrap().as_mut() {
+    let mut background = BACKGROUND.lock().expect("BACKGROUND lock poisoned");
+    let mut hq_images = HQ_IMAGES.lock().expect("HQ_IMAGES lock poisoned");
+    match TARGET.lock().expect("TARGET lock poisoned").as_mut() {
         Some(Target::Background) => {
             if let Some(background) = background.as_mut() {
                 f(TargetMut::Background(background))

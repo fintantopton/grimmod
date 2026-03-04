@@ -300,6 +300,15 @@ pub enum UnhookError {
     Retour(String, retour::Error),
 }
 
+impl std::fmt::Display for UnhookError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnhookError::NotHooked(name) => write!(f, "{} is not hooked", name),
+            UnhookError::Retour(name, err) => write!(f, "failed to unhook {}: {}", name, err),
+        }
+    }
+}
+
 macro_rules! impl_bound_extern_fn_traits {
     ($conv:literal, $($T:ident),*) => {
         #[allow(non_snake_case)]
