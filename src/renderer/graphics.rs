@@ -443,7 +443,7 @@ pub extern "C" fn draw_indexed_primitives(
     param_5: u32,
 ) {
     if image::Background::is_stencilled_video_scene()
-        && Draw::from_raw(draw).map_or(false, |draw| draw.is_smush())
+        && Draw::from_raw(draw).is_some_and(|draw| draw.is_smush())
     {
         if let Err(e) = gl::draw_elements_base_vertex
             .hook(draw_elements_base_vertex as gl::DrawElementsBaseVertex)

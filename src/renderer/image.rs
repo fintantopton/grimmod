@@ -81,7 +81,7 @@ fn open_png_lenient(path: &Path) -> Result<(Vec<u8>, u32, u32, bool), String> {
             rgba
         }
         png::ColorType::Indexed => {
-            return Err(format!("indexed color PNG not supported"));
+            return Err("indexed color PNG not supported".to_string());
         }
     };
 
