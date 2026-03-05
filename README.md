@@ -81,10 +81,13 @@ Create a `grimmod.toml` file beside the game binary (`glu32.dll` on Windows, `Gr
 | `display.hdpi_fix = true/false`       | true (Win) / false (Linux) | Windows only. GrimMod rewrites some of the window handling to always render at native resolution. Not applicable on Linux. |
 | `logging.enabled = true/false`        | true             | Enable/disable creation of and writing to `grimmod.log` with simple logging info, mostly for the purposes of a health check. |
 | `logging.debug = true/false`          | false            | Enable/disable debug logging. This outputs a lot of information per frame, useless outside of debugging/development. |
+| `logging.profile = true/false`        | false            | Enable/disable per-frame performance profiling. Logs hook timing data every 120 frames. |
 
 ## Building
 
 The project requires Rust Nightly (uses `#![feature(fn_traits, tuple_trait, unboxed_closures)]`) and libvpx.
+
+libvpx can be linked **statically** (recommended for distribution — produces a self-contained binary with no runtime dependencies) or **dynamically** (simpler for development but the target machine must have a matching libvpx installed). Static linking is controlled via the `VPX_STATIC=1` environment variable along with `VPX_LIB_DIR`, `VPX_INCLUDE_DIR`, and `VPX_VERSION`. Dynamic linking uses `pkg-config` to find libvpx automatically.
 
 ### Windows
 

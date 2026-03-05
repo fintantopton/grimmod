@@ -6,6 +6,7 @@ mod file;
 mod init;
 mod macros;
 mod misc;
+mod perf;
 mod raw;
 mod renderer;
 

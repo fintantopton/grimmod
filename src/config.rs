@@ -91,6 +91,9 @@ pub struct Logging {
     pub enabled: bool,
     #[serde(default = "default_false")]
     pub debug: bool,
+    /// Enable per-frame performance profiling output.
+    #[serde(default = "default_false")]
+    pub profile: bool,
 }
 
 impl Default for Logging {
@@ -98,6 +101,7 @@ impl Default for Logging {
         Logging {
             enabled: true,
             debug: false,
+            profile: false,
         }
     }
 }

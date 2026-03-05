@@ -5,6 +5,7 @@ use std::sync::Mutex;
 
 use crate::config::Config;
 use crate::debug;
+use crate::perf;
 use crate::raw::{gl, grim};
 use crate::renderer::{image, video_cutouts};
 
@@ -108,11 +109,27 @@ impl SurfaceAddr {
 
     /// Return the address for the background render pass's surface
     pub fn bitmap_underlays() -> Option<SurfaceAddr> {
-        unsafe {
+        let t = perf::begin();
+        let result = unsafe {
+            let rp_ptr = grim::BITMAP_UNDERLAYS_RENDER_PASS.inner_addr();
             let render_pass = grim::BITMAP_UNDERLAYS_RENDER_PASS.inner_ref()?;
-            let entity = render_pass.entities.data().first()?;
-            Some(SurfaceAddr::from_ptr(entity.surface))
-        }
+            let entities_data = render_pass.entities.data();
+            let entity = entities_data.first()?;
+            let surface_ptr = entity.surface;
+            if debug::verbose() {
+                debug::debug(format!(
+                    "bitmap_underlays: rp_ptr=0x{:x}, entities.start=0x{:x}, entities.len={}, entity_ptr=0x{:x}, surface_ptr=0x{:x}",
+                    rp_ptr,
+                    render_pass.entities.start as usize,
+                    entities_data.len(),
+                    entity as *const _ as usize,
+                    surface_ptr as usize,
+                ));
+            }
+            Some(SurfaceAddr::from_ptr(surface_ptr))
+        };
+        perf::end(t, &perf::BITMAP_UNDERLAYS);
+        result
     }
 
     pub fn is_bitmap_underlays(&self) -> bool {
@@ -201,7 +218,8 @@ impl Draw {
     }
 
     pub fn is_hq(&self) -> bool {
-        (self.surface.is_bitmap_underlays()
+        let t = perf::begin();
+        let result = (self.surface.is_bitmap_underlays()
             && image::BACKGROUND
                 .lock()
                 .expect("BACKGROUND lock poisoned")
@@ -209,11 +227,17 @@ impl Draw {
             || OVERLAYS
                 .lock()
                 .expect("OVERLAYS lock poisoned")
-                .contains_key(&self.surface)
+                .contains_key(&self.surface);
+        perf::end(t, &perf::IS_HQ);
+        result
     }
 
     pub fn is_smush(&self) -> bool {
-        Some(self.surface) == *SMUSH_SURFACE.lock().expect("SMUSH_SURFACE lock poisoned")
+        let t = perf::begin();
+        let result =
+            Some(self.surface) == *SMUSH_SURFACE.lock().expect("SMUSH_SURFACE lock poisoned");
+        perf::end(t, &perf::IS_SMUSH);
+        result
     }
 }
 
@@ -231,6 +255,7 @@ pub extern "C" fn open_bm_image(
     param_2: u32,
     param_3: u32,
 ) -> *mut grim::ImageContainer {
+    let t = perf::begin();
     let image_container = grim::open_bm_image(filename, param_2, param_3);
 
     if let Some(image_container) = ImageContainer::from_raw(image_container) {
@@ -240,11 +265,13 @@ pub extern "C" fn open_bm_image(
         }
     }
 
+    perf::end(t, &perf::OPEN_BM_IMAGE);
     image_container
 }
 
 /// Hooks resource management to drop HQ images with original image
 pub extern "C" fn manage_resource(resource: *mut grim::Resource) -> c_int {
+    let t = perf::begin();
     let state = unsafe { (*resource).state };
     let image_container_addr = ImageContainerAddr(unsafe { (*resource).image_container as usize });
 
@@ -255,11 +282,14 @@ pub extern "C" fn manage_resource(resource: *mut grim::Resource) -> c_int {
         }
     }
 
-    grim::manage_resource(resource)
+    let result = grim::manage_resource(resource);
+    perf::end(t, &perf::MANAGE_RESOURCE);
+    result
 }
 
 /// Hooks decompression to track an image through the system
 pub extern "C" fn decompress_image(image: *const grim::Image) {
+    let t = perf::begin();
     if debug::verbose() {
         debug::info(format!(
             "Decompressing {}",
@@ -271,7 +301,8 @@ pub extern "C" fn decompress_image(image: *const grim::Image) {
     // it will shortly be copied to the clean buffer and rendered
     *DECOMPRESSED.lock().expect("DECOMPRESSED lock poisoned") = Some(ImageAddr::from_ptr(image));
 
-    grim::decompress_image(image)
+    grim::decompress_image(image);
+    perf::end(t, &perf::DECOMPRESS_IMAGE);
 }
 
 fn active_smush_frame_size() -> Option<(i32, i32)> {
@@ -290,6 +321,7 @@ pub extern "C" fn copy_image(
     param_7: u32,
     param_8: u32,
 ) {
+    let t = perf::begin();
     let src_image_addr = ImageAddr::from_ptr(src_image);
     let dst_image_addr = ImageAddr::from_ptr(dst_image);
 
@@ -332,7 +364,8 @@ pub extern "C" fn copy_image(
         y,
         param_7,
         param_8,
-    )
+    );
+    perf::end(t, &perf::COPY_IMAGE);
 }
 
 /// Hooks surface binding to associate surfaces with HQ overlays
@@ -342,6 +375,7 @@ pub extern "C" fn bind_image_surface(
     param_3: u32,
     param_4: u32,
 ) -> *mut grim::Surface {
+    let t = perf::begin();
     let image_addr = ImageAddr::from_ptr(image).original();
     let is_hq = image::HqImage::is_loaded(image_addr);
     let surface = grim::bind_image_surface(image, param_2, param_3, param_4);
@@ -370,6 +404,7 @@ pub extern "C" fn bind_image_surface(
             .remove(&surface_addr);
     }
 
+    perf::end(t, &perf::BIND_IMAGE_SURFACE);
     surface
 }
 
@@ -379,6 +414,7 @@ pub extern "C" fn bind_image_surface(
 /// Linux: C calling convention
 #[cfg(target_os = "windows")]
 pub extern "stdcall" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint) {
+    let t = perf::begin();
     let surface_addr = SurfaceAddr(textures as usize - 0x20);
     OVERLAYS
         .lock()
@@ -386,10 +422,12 @@ pub extern "stdcall" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint)
         .remove(&surface_addr);
 
     gl::delete_textures(n, textures);
+    perf::end(t, &perf::DELETE_TEXTURES);
 }
 
 #[cfg(target_os = "linux")]
 pub extern "C" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint) {
+    let t = perf::begin();
     let surface_addr = SurfaceAddr(textures as usize - 0x20);
     OVERLAYS
         .lock()
@@ -397,10 +435,13 @@ pub extern "C" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint) {
         .remove(&surface_addr);
 
     gl::delete_textures(n, textures);
+    perf::end(t, &perf::DELETE_TEXTURES);
 }
 
 /// Hooks draw preparation to set state for HQ images
 pub extern "C" fn setup_draw(draw: *mut grim::Draw, index_buffer: *const c_void) {
+    let t = perf::begin();
+
     let hq_draw = Draw::from_raw(draw).filter(|draw| draw.is_hq());
 
     // for hq images, use a custom shader that keeps the full resolution
@@ -432,6 +473,8 @@ pub extern "C" fn setup_draw(draw: *mut grim::Draw, index_buffer: *const c_void)
             gl::blend_func_separate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, 1, 0);
         }
     }
+
+    perf::end(t, &perf::SETUP_DRAW);
 }
 
 /// Hooks the main draw call batch to detect a video that needs cutouts
@@ -442,6 +485,8 @@ pub extern "C" fn draw_indexed_primitives(
     param_4: u32,
     param_5: u32,
 ) {
+    let t = perf::begin();
+
     if image::Background::is_stencilled_video_scene()
         && Draw::from_raw(draw).is_some_and(|draw| draw.is_smush())
     {
@@ -452,7 +497,8 @@ pub extern "C" fn draw_indexed_primitives(
         }
     }
 
-    grim::draw_indexed_primitives(draw, param_2, param_3, param_4, param_5)
+    grim::draw_indexed_primitives(draw, param_2, param_3, param_4, param_5);
+    perf::end(t, &perf::DRAW_INDEXED_PRIMITIVES);
 }
 
 /// Hooks the opengl draw call for videos to perform a stencil test for cutouts
@@ -492,20 +538,24 @@ pub extern "C" fn draw_elements_base_vertex(
 
 /// Hooks texture uploads swap out regular assets for their HQ versions
 pub extern "C" fn surface_upload(surface: *mut grim::Surface, image_data: *mut c_void) {
+    let t = perf::begin();
     let surface_addr = SurfaceAddr::from_ptr(surface);
     let target = image::get_target(surface_addr);
 
     if target.is_none() {
-        return unsafe {
+        unsafe {
             // call with null to reset the buffer size as it might have been changed by a hq image
             if !image_data.is_null() && (*surface).format < 0x10 {
                 grim::surface_upload(surface, std::ptr::null_mut());
             }
             grim::surface_upload(surface, image_data);
-        };
+        }
+        perf::end(t, &perf::SURFACE_UPLOAD);
+        return;
     }
 
     if image_data.is_null() {
+        perf::end(t, &perf::SURFACE_UPLOAD);
         return;
     }
 
@@ -526,6 +576,7 @@ pub extern "C" fn surface_upload(surface: *mut grim::Surface, image_data: *mut c
         debug::error(format!("Failed to unhook tex_image_2d: {}", e));
     }
     *image::TARGET.lock().expect("TARGET lock poisoned") = None;
+    perf::end(t, &perf::SURFACE_UPLOAD);
 }
 
 /// Sub-hook for glTexImage2D — replaces texture data with HQ version.
@@ -649,6 +700,8 @@ pub extern "C" fn render_scene(
     surface: *const grim::Surface,
     transition: f32,
 ) {
+    let t = perf::begin();
+
     let value = if transition == 1.0 && Config::get().renderer.quick_toggle {
         1.0
     } else {
@@ -661,6 +714,12 @@ pub extern "C" fn render_scene(
     grim::render_scene(draw, surface, value);
     if let Err(e) = gl::sampler_parameteri.unhook() {
         debug::error(format!("Failed to unhook sampler_parameteri: {}", e));
+    }
+
+    if let Some(start) = t {
+        let elapsed = start.elapsed().as_nanos() as u64;
+        perf::RENDER_SCENE.record(elapsed);
+        perf::frame_tick(elapsed);
     }
 }
 
@@ -703,6 +762,7 @@ pub extern "stdcall" fn compressed_tex_image2d(
     image_size: gl::Sizei,
     data: *const c_void,
 ) {
+    let t = perf::begin();
     gl::compressed_tex_image2d(
         target,
         level,
@@ -713,6 +773,7 @@ pub extern "stdcall" fn compressed_tex_image2d(
         image_size,
         data,
     );
+    perf::end(t, &perf::COMPRESSED_TEX_IMAGE);
 }
 
 #[cfg(target_os = "linux")]
@@ -726,6 +787,7 @@ pub extern "C" fn compressed_tex_image2d(
     image_size: gl::Sizei,
     data: *const c_void,
 ) {
+    let t = perf::begin();
     gl::compressed_tex_image2d(
         target,
         level,
@@ -736,4 +798,5 @@ pub extern "C" fn compressed_tex_image2d(
         image_size,
         data,
     );
+    perf::end(t, &perf::COMPRESSED_TEX_IMAGE);
 }

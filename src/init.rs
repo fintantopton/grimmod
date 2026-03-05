@@ -1,6 +1,6 @@
 use crate::{
     config::Config,
-    debug, file, misc,
+    debug, file, misc, perf,
     raw::{gl, grim, memory::HookError, sdl},
     renderer::{graphics, video_cutouts},
 };
@@ -98,6 +98,7 @@ fn post_graphics_startup() -> Result<(), String> {
 }
 
 fn init_hooks() -> Result<(), HookError> {
+    perf::init();
     always_on_hooks()?;
     mods_hooks()?;
     hq_assets_hooks()?;
