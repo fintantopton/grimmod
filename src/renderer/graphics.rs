@@ -63,13 +63,13 @@ impl ImageAddr {
     }
 
     /// Windows: BACK_BUFFER IS the image, so use .addr()
-    /// Linux: BACK_BUFFER is a pointer to the image, so use .inner_addr()
+    /// Linux/macOS: BACK_BUFFER is a pointer to the image, so use .inner_addr()
     pub fn is_back_buffer(&self) -> bool {
         #[cfg(target_os = "windows")]
         {
             self.0 == unsafe { grim::BACK_BUFFER.addr() }
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             self.0 == unsafe { grim::BACK_BUFFER.inner_addr() }
         }
@@ -109,9 +109,20 @@ impl SurfaceAddr {
     /// Return the address for the background render pass's surface
     pub fn bitmap_underlays() -> Option<SurfaceAddr> {
         unsafe {
+            let rp_ptr = grim::BITMAP_UNDERLAYS_RENDER_PASS.inner_addr();
             let render_pass = grim::BITMAP_UNDERLAYS_RENDER_PASS.inner_ref()?;
-            let entity = render_pass.entities.data().first()?;
-            Some(SurfaceAddr::from_ptr(entity.surface))
+            let entities_data = render_pass.entities.data();
+            let entity = entities_data.first()?;
+            let surface_ptr = entity.surface;
+            debug::info(format!(
+                "bitmap_underlays: rp_ptr=0x{:x}, entities.start=0x{:x}, entities.len={}, entity_ptr=0x{:x}, surface_ptr=0x{:x}",
+                rp_ptr,
+                render_pass.entities.start as usize,
+                entities_data.len(),
+                entity as *const _ as usize,
+                surface_ptr as usize,
+            ));
+            Some(SurfaceAddr::from_ptr(surface_ptr))
         }
     }
 
@@ -184,6 +195,7 @@ impl Image {
     }
 }
 
+#[allow(dead_code)]
 pub struct Draw {
     pub addr: usize,
     pub surface: SurfaceAddr,
@@ -280,6 +292,7 @@ fn active_smush_frame_size() -> Option<(i32, i32)> {
 }
 
 /// Hooks image copying to detect when a background or overlay is being interacted with
+#[cfg(not(target_os = "macos"))]
 pub extern "C" fn copy_image(
     dst_image: *mut grim::Image,
     dst_surface: *mut grim::Surface,
@@ -289,6 +302,56 @@ pub extern "C" fn copy_image(
     y: u32,
     param_7: u32,
     param_8: u32,
+) {
+    copy_image_inner(dst_image, dst_surface, src_image, src_surface, x, y);
+
+    grim::copy_image(
+        dst_image,
+        dst_surface,
+        src_image,
+        src_surface,
+        x,
+        y,
+        param_7,
+        param_8,
+    )
+}
+
+/// Hooks image copying to detect when a background or overlay is being interacted with
+/// macOS version: param_7 is LECRECT* (64-bit pointer), not u32
+#[cfg(target_os = "macos")]
+pub extern "C" fn copy_image(
+    dst_image: *mut grim::Image,
+    dst_surface: *mut grim::Surface,
+    src_image: *mut grim::Image,
+    src_surface: *mut grim::Surface,
+    x: u32,
+    y: u32,
+    param_7: usize,
+    param_8: u32,
+) {
+    copy_image_inner(dst_image, dst_surface, src_image, src_surface, x, y);
+
+    grim::copy_image(
+        dst_image,
+        dst_surface,
+        src_image,
+        src_surface,
+        x,
+        y,
+        param_7,
+        param_8,
+    )
+}
+
+/// Shared logic for copy_image hook (platform-independent)
+fn copy_image_inner(
+    dst_image: *mut grim::Image,
+    _dst_surface: *mut grim::Surface,
+    src_image: *mut grim::Image,
+    _src_surface: *mut grim::Surface,
+    x: u32,
+    y: u32,
 ) {
     let src_image_addr = ImageAddr::from_ptr(src_image);
     let dst_image_addr = ImageAddr::from_ptr(dst_image);
@@ -322,17 +385,6 @@ pub extern "C" fn copy_image(
             *image::BACKGROUND.lock().expect("BACKGROUND lock poisoned") = None;
         }
     }
-
-    grim::copy_image(
-        dst_image,
-        dst_surface,
-        src_image,
-        src_surface,
-        x,
-        y,
-        param_7,
-        param_8,
-    )
 }
 
 /// Hooks surface binding to associate surfaces with HQ overlays
@@ -376,7 +428,10 @@ pub extern "C" fn bind_image_surface(
 /// Hooks texture deletion to clear out any bound HQ overlays
 ///
 /// Windows: stdcall calling convention (GL functions are stdcall on Windows)
-/// Linux: C calling convention
+/// Linux/macOS: C calling convention
+///
+/// The offset from `textures` pointer back to the Surface struct differs by
+/// pointer width: 0x20 on 32-bit (Windows/Linux), 0x28 on 64-bit (macOS).
 #[cfg(target_os = "windows")]
 pub extern "stdcall" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint) {
     let surface_addr = SurfaceAddr(textures as usize - 0x20);
@@ -391,6 +446,17 @@ pub extern "stdcall" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint)
 #[cfg(target_os = "linux")]
 pub extern "C" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint) {
     let surface_addr = SurfaceAddr(textures as usize - 0x20);
+    OVERLAYS
+        .lock()
+        .expect("OVERLAYS lock poisoned")
+        .remove(&surface_addr);
+
+    gl::delete_textures(n, textures);
+}
+
+#[cfg(target_os = "macos")]
+pub extern "C" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint) {
+    let surface_addr = SurfaceAddr(textures as usize - 0x28);
     OVERLAYS
         .lock()
         .expect("OVERLAYS lock poisoned")
@@ -435,10 +501,36 @@ pub extern "C" fn setup_draw(draw: *mut grim::Draw, index_buffer: *const c_void)
 }
 
 /// Hooks the main draw call batch to detect a video that needs cutouts
+///
+/// On 64-bit macOS, param_2 (rsi) and param_3 (rdx) must be pointer-sized because
+/// param_3 is actually a zgIndexBuffer* that gets passed through to DrawSetup.
+/// On 32-bit Linux/Windows, u32 == pointer size so this doesn't matter.
+#[cfg(not(target_os = "macos"))]
 pub extern "C" fn draw_indexed_primitives(
     draw: *mut grim::Draw,
     param_2: u32,
     param_3: u32,
+    param_4: u32,
+    param_5: u32,
+) {
+    if image::Background::is_stencilled_video_scene()
+        && Draw::from_raw(draw).is_some_and(|draw| draw.is_smush())
+    {
+        if let Err(e) = gl::draw_elements_base_vertex
+            .hook(draw_elements_base_vertex as gl::DrawElementsBaseVertex)
+        {
+            debug::error(format!("Failed to hook draw_elements_base_vertex: {}", e));
+        }
+    }
+
+    grim::draw_indexed_primitives(draw, param_2, param_3, param_4, param_5)
+}
+
+#[cfg(target_os = "macos")]
+pub extern "C" fn draw_indexed_primitives(
+    draw: *mut grim::Draw,
+    param_2: usize,
+    param_3: usize,
     param_4: u32,
     param_5: u32,
 ) {
@@ -473,7 +565,7 @@ pub extern "stdcall" fn draw_elements_base_vertex(
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub extern "C" fn draw_elements_base_vertex(
     mode: gl::Enum,
     count: gl::Sizei,
@@ -570,7 +662,7 @@ extern "stdcall" fn hq_tex_image_2d(
     })
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 extern "C" fn hq_tex_image_2d(
     _target: gl::Enum,
     _level: gl::Int,
@@ -627,7 +719,7 @@ extern "stdcall" fn hq_pixel_storei(pname: gl::Enum, param: gl::Int) {
     })
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 extern "C" fn hq_pixel_storei(pname: gl::Enum, param: gl::Int) {
     image::with_target_hq_image(|target_ref| {
         if pname == gl::UNPACK_ROW_LENGTH {
@@ -678,7 +770,7 @@ pub extern "stdcall" fn forced_linear_sampler_parameteri(
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub extern "C" fn forced_linear_sampler_parameteri(
     target: gl::Enum,
     pname: gl::Enum,
@@ -715,7 +807,7 @@ pub extern "stdcall" fn compressed_tex_image2d(
     );
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub extern "C" fn compressed_tex_image2d(
     target: gl::Enum,
     level: gl::Int,
