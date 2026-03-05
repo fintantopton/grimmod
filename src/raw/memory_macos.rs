@@ -14,7 +14,8 @@
 // - No __errno_location — use libc::__error() on macOS for errno
 
 use std::marker::PhantomData;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use crate::debug;
 
@@ -707,6 +708,11 @@ pub struct BoundFn<F> {
     pub addr: Mutex<usize>,
     hook: FnHook,
     pub symbol: Option<&'static str>,
+    /// Cached original-function address for the fast path.
+    /// Set to the trampoline address on hook(), restored to the bound address on unhook(),
+    /// 0 when unbound. A single Relaxed atomic load replaces two mutex acquisitions
+    /// on every call through the Fn impls (~308 calls/frame for hot-path hooks).
+    original_fn_cache: AtomicUsize,
     fn_type: PhantomData<F>,
 }
 
@@ -720,6 +726,7 @@ impl<F> BoundFn<F> {
             addr: Mutex::new(0),
             hook: FnHook::Direct(Mutex::new(None)),
             symbol,
+            original_fn_cache: AtomicUsize::new(0),
             fn_type: PhantomData,
         }
     }
@@ -730,6 +737,7 @@ impl<F> BoundFn<F> {
             addr: Mutex::new(0),
             hook: FnHook::Indirect(Mutex::new(None)),
             symbol: None,
+            original_fn_cache: AtomicUsize::new(0),
             fn_type: PhantomData,
         }
     }
@@ -742,6 +750,16 @@ impl<F> BoundFn<F> {
         let mut addr_guard = self.addr.lock().unwrap();
         if *addr_guard == 0 {
             *addr_guard = addr;
+            // Pre-populate the fast-path cache.
+            // For direct hooks: the original function IS at `addr`.
+            // For indirect hooks: `addr` is the GOT/stub slot; the actual
+            // function pointer is at *addr. Read it now (safe because the
+            // dynamic linker has already resolved the symbol by bind time).
+            let cache_addr = match &self.hook {
+                FnHook::Direct(_) => addr,
+                FnHook::Indirect(_) => unsafe { *(addr as *const usize) },
+            };
+            self.original_fn_cache.store(cache_addr, Ordering::Release);
             Ok(())
         } else {
             Err(BindError::AlreadyBound(self.name.to_string()))
@@ -829,16 +847,23 @@ impl<F> BoundFn<F> {
                     *(addr as *mut u8).add(i) = 0x90;
                 }
 
+                // Update the fast-path cache to point to the trampoline
+                let trampoline_addr = trampoline.addr();
                 *mutex.lock().unwrap() = Some(InlineHook {
                     trampoline,
                     saved_bytes,
                     target_addr: addr,
                 });
+                self.original_fn_cache
+                    .store(trampoline_addr, Ordering::Release);
             },
             FnHook::Indirect(mutex) => unsafe {
                 let original_addr = *(addr as *const usize);
                 write(addr, replacement_addr);
                 *mutex.lock().unwrap() = Some(original_addr);
+                // Update the fast-path cache to the saved original function pointer
+                self.original_fn_cache
+                    .store(original_addr, Ordering::Release);
             },
         }
 
@@ -864,6 +889,9 @@ impl<F> BoundFn<F> {
                         len,
                     );
                 }
+                // Restore cache to the original bound address (no longer hooked)
+                self.original_fn_cache
+                    .store(hook.target_addr, Ordering::Release);
                 Ok(())
             }
             FnHook::Indirect(mutex) => {
@@ -872,7 +900,14 @@ impl<F> BoundFn<F> {
                     .unwrap()
                     .take()
                     .ok_or_else(|| self.not_hooked())?;
-                unsafe { write(self.get_addr(), original_addr) };
+                let bound_addr = self.get_addr();
+                unsafe { write(bound_addr, original_addr) };
+                // Restore cache: for indirect hooks, the original function is what
+                // the GOT/stub pointer now points to again. But the *bound* address
+                // is the GOT slot address, and reading through it gives original_addr.
+                // Store original_addr since that's what callers need when unhooked.
+                self.original_fn_cache
+                    .store(original_addr, Ordering::Release);
                 Ok(())
             }
         }
@@ -893,7 +928,20 @@ impl<F> BoundFn<F> {
         }
     }
 
+    /// Fast path for the Fn impls: single atomic load, no mutex.
+    /// Returns 0 if unbound (caller must check).
+    #[inline(always)]
+    pub fn original_fn_addr_fast(&self) -> usize {
+        self.original_fn_cache.load(Ordering::Acquire)
+    }
+
     pub fn original_fn_addr_or_panic(&self) -> usize {
+        // Try fast path first
+        let cached = self.original_fn_addr_fast();
+        if cached != 0 {
+            return cached;
+        }
+        // Fallback to slow path (shouldn't happen in normal operation)
         if let Some(f) = self.original_fn_addr() {
             f
         } else {
@@ -1015,7 +1063,7 @@ impl_bound_fn_traits!(A, B, C, D, E, F, G, H, I, J);
 pub struct Value<T, F: 'static> {
     name: &'static str,
     source: ValueSource<F>,
-    addr: Mutex<Option<usize>>,
+    addr: OnceLock<usize>,
     value_type: PhantomData<T>,
 }
 
@@ -1036,7 +1084,7 @@ impl<T, F> Value<T, F> {
         Value {
             name,
             source: ValueSource::Symbol(symbol),
-            addr: Mutex::new(None),
+            addr: OnceLock::new(),
             value_type: PhantomData,
         }
     }
@@ -1053,43 +1101,38 @@ impl<T, F> Value<T, F> {
                 relative_to,
                 offset,
             },
-            addr: Mutex::new(None),
+            addr: OnceLock::new(),
             value_type: PhantomData,
         }
     }
 
     pub fn addr(&self) -> usize {
-        let mut addr_guard = self.addr.lock().unwrap();
-        match *addr_guard {
-            Some(addr) => addr,
-            None => {
-                let addr = match &self.source {
-                    ValueSource::Symbol(sym_name) => crate::raw::process::dlsym_lookup(sym_name)
-                        .or_else(|| crate::raw::process::macho_symbol_lookup(sym_name))
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "Could not resolve symbol '{}' for value '{}'",
-                                sym_name, self.name
-                            )
-                        }),
-                    ValueSource::Relative {
-                        relative_to,
-                        offset,
-                    } => {
-                        let ref_addr = relative_to.get_addr() + offset;
-                        unsafe { std::ptr::read(ref_addr as *const usize) }
-                    }
-                };
-                if debug::verbose() {
-                    debug::info(format!(
-                        "Found address for static {}: 0x{:x}",
-                        self.name, addr
-                    ));
+        *self.addr.get_or_init(|| {
+            let addr = match &self.source {
+                ValueSource::Symbol(sym_name) => crate::raw::process::dlsym_lookup(sym_name)
+                    .or_else(|| crate::raw::process::macho_symbol_lookup(sym_name))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Could not resolve symbol '{}' for value '{}'",
+                            sym_name, self.name
+                        )
+                    }),
+                ValueSource::Relative {
+                    relative_to,
+                    offset,
+                } => {
+                    let ref_addr = relative_to.get_addr() + offset;
+                    unsafe { std::ptr::read(ref_addr as *const usize) }
                 }
-                *addr_guard = Some(addr);
-                addr
+            };
+            if debug::verbose() {
+                debug::info(format!(
+                    "Found address for static {}: 0x{:x}",
+                    self.name, addr
+                ));
             }
-        }
+            addr
+        })
     }
 }
 

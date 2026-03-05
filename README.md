@@ -160,10 +160,13 @@ Create a `grimmod.toml` file beside the game binary (`glu32.dll` on Windows, `Gr
 | `display.hdpi_fix = true/false`       | true (Win/macOS) / false (Linux) | GrimMod rewrites some of the window handling to always render at native resolution. Not applicable on Linux. |
 | `logging.enabled = true/false`        | true             | Enable/disable creation of and writing to `grimmod.log` with simple logging info, mostly for the purposes of a health check. |
 | `logging.debug = true/false`          | false            | Enable/disable debug logging. This outputs a lot of information per frame, useless outside of debugging/development. |
+| `logging.profile = true/false`        | false            | Enable/disable per-frame performance profiling. Logs hook timing data every 120 frames. |
 
 ## Building
 
 The project requires Rust Nightly (uses `#![feature(fn_traits, tuple_trait, unboxed_closures)]`) and libvpx.
+
+libvpx can be linked **statically** (recommended for distribution — produces a self-contained binary with no runtime dependencies) or **dynamically** (simpler for development but the target machine must have a matching libvpx installed). Static linking is controlled via the `VPX_STATIC=1` environment variable along with `VPX_LIB_DIR`, `VPX_INCLUDE_DIR`, and `VPX_VERSION`. Dynamic linking uses `pkg-config` to find libvpx automatically.
 
 ### Windows
 
@@ -194,9 +197,21 @@ The output is `target/i686-unknown-linux-gnu/release/libgrimmod.so`.
 
 ### macOS
 
-The macOS build targets 64-bit x86_64 (`x86_64-apple-darwin`) and requires `libvpx` built for x86_64. On Apple Silicon, Rust cross-compiles to x86_64 and the game runs under Rosetta 2.
+The macOS build targets 64-bit x86_64 (`x86_64-apple-darwin`) and requires `libvpx`. The game binary is x86_64, so on Apple Silicon the build must cross-compile and the game runs under Rosetta 2.
 
-Build libvpx for x86_64 (if not already installed):
+**Static linking (recommended)** — produces a self-contained dylib with no external dependencies, portable to any Mac:
+
+On a native x86_64 Mac with Homebrew:
+```bash
+brew install libvpx pkg-config
+VPX_LIB_DIR=$(brew --prefix libvpx)/lib \
+  VPX_INCLUDE_DIR=$(brew --prefix libvpx)/include \
+  VPX_VERSION=$(pkg-config --modversion vpx) \
+  VPX_STATIC=1 \
+  cargo +nightly build --release
+```
+
+On Apple Silicon, cross-compile against a local x86_64 libvpx build:
 ```bash
 git clone https://chromium.googlesource.com/webm/libvpx
 cd libvpx
@@ -208,14 +223,24 @@ CROSS=x86_64-apple-darwin ../configure --target=x86_64-darwin20-gcc \
 make -j$(sysctl -n hw.ncpu) && make install
 ```
 
-Build grimmod:
+Then build with static linking:
+```bash
+rustup +nightly target add x86_64-apple-darwin
+VPX_LIB_DIR=/tmp/libvpx-x86_64/lib \
+  VPX_INCLUDE_DIR=/tmp/libvpx-x86_64/include \
+  VPX_VERSION=1.16.0 \
+  VPX_STATIC=1 \
+  cargo +nightly build --release --target x86_64-apple-darwin
+```
+
+**Dynamic linking** — links against a system libvpx (the target machine must have the same libvpx version installed):
 ```bash
 rustup +nightly target add x86_64-apple-darwin
 PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_PATH=/tmp/libvpx-x86_64/lib/pkgconfig \
   cargo +nightly build --release --target x86_64-apple-darwin
 ```
 
-The output is `target/x86_64-apple-darwin/release/libgrimmod.dylib`.
+The output is `target/x86_64-apple-darwin/release/libgrimmod.dylib` (or `target/release/libgrimmod.dylib` on a native x86_64 Mac).
 
 ## Architecture
 
