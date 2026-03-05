@@ -99,7 +99,49 @@ The output is `target/i686-pc-windows-msvc/release/grimmod.dll`, which should be
 
 ### Linux
 
-The Linux build targets 32-bit x86 (`i686-unknown-linux-gnu`) and requires `gcc-multilib` and 32-bit `libvpx` development headers. Using Docker:
+The Linux build targets 32-bit x86 (`i686-unknown-linux-gnu`) and requires a 32-bit C toolchain and 32-bit `libvpx`.
+
+**Static linking (recommended)** — produces a self-contained `.so` with no libvpx runtime dependency:
+
+First, install 32-bit build prerequisites. On Fedora:
+```bash
+sudo dnf install gcc glibc-devel.i686 libstdc++-devel.i686 nasm yasm
+rustup toolchain install nightly
+rustup +nightly target add i686-unknown-linux-gnu
+```
+
+On Debian/Ubuntu:
+```bash
+sudo apt-get install gcc-multilib libc6-dev-i386 nasm yasm
+rustup toolchain install nightly
+rustup +nightly target add i686-unknown-linux-gnu
+```
+
+Build a 32-bit static libvpx (decoder-only — encoders are not needed and avoids C++ multilib issues):
+```bash
+git clone https://chromium.googlesource.com/webm/libvpx
+cd libvpx && git checkout v1.16.0
+mkdir build-i686 && cd build-i686
+CFLAGS='-m32' LDFLAGS='-m32' CC='gcc -m32' \
+  ../configure --target=x86-linux-gcc \
+  --enable-static --disable-shared \
+  --enable-vp8-decoder --disable-vp8-encoder \
+  --enable-vp9-decoder --disable-vp9-encoder \
+  --disable-examples --disable-tools --disable-docs --disable-unit-tests \
+  --prefix="$(pwd)/install"
+make -j$(nproc) && make install
+```
+
+Then build grimmod:
+```bash
+VPX_LIB_DIR=<path-to>/build-i686/install/lib \
+  VPX_INCLUDE_DIR=<path-to>/build-i686/install/include \
+  VPX_VERSION=1.16.0 \
+  VPX_STATIC=1 \
+  cargo +nightly build --release --target i686-unknown-linux-gnu
+```
+
+**Dynamic linking** — links against system libvpx (the target machine must have 32-bit libvpx installed). Using Docker:
 
 ```bash
 docker run --rm --platform linux/amd64 -v "$(pwd)":/src -w /src rust:latest bash -c "

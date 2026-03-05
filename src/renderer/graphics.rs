@@ -501,7 +501,7 @@ pub extern "C" fn draw_indexed_primitives(
     perf::end(t, &perf::DRAW_INDEXED_PRIMITIVES);
 }
 
-/// Hooks the opengl draw call for videos to perform a stencil test for cutouts
+/// Hooks the opengl draw call for videos to perform a stencil test for cutouts.
 #[cfg(target_os = "windows")]
 pub extern "stdcall" fn draw_elements_base_vertex(
     mode: gl::Enum,
@@ -536,7 +536,7 @@ pub extern "C" fn draw_elements_base_vertex(
     }
 }
 
-/// Hooks texture uploads swap out regular assets for their HQ versions
+/// Hooks texture uploads swap out regular assets for their HQ versions.
 pub extern "C" fn surface_upload(surface: *mut grim::Surface, image_data: *mut c_void) {
     let t = perf::begin();
     let surface_addr = SurfaceAddr::from_ptr(surface);
@@ -582,15 +582,15 @@ pub extern "C" fn surface_upload(surface: *mut grim::Surface, image_data: *mut c
 /// Sub-hook for glTexImage2D — replaces texture data with HQ version.
 #[cfg(target_os = "windows")]
 extern "stdcall" fn hq_tex_image_2d(
-    _target: gl::Enum,
-    _level: gl::Int,
-    _internalformat: gl::Int,
-    _width: gl::Sizei,
-    _height: gl::Sizei,
-    _border: gl::Int,
-    _format: gl::Enum,
-    _typ: gl::Enum,
-    _data: *const c_void,
+    target: gl::Enum,
+    level: gl::Int,
+    internalformat: gl::Int,
+    width: gl::Sizei,
+    height: gl::Sizei,
+    border: gl::Int,
+    format: gl::Enum,
+    typ: gl::Enum,
+    data: *const c_void,
 ) {
     fn tex_image_2d(width: u32, height: u32, ptr: *const u8) {
         gl::tex_image_2d(
@@ -605,33 +605,50 @@ extern "stdcall" fn hq_tex_image_2d(
             ptr as *const _,
         )
     }
-    image::with_target_hq_image(|target_ref| match target_ref {
-        image::TargetMut::Background(background) => tex_image_2d(
-            background.width,
-            background.height,
-            background.buffer.as_ptr(),
-        ),
+    let handled = image::with_target_hq_image(|target_ref| match target_ref {
+        image::TargetMut::Background(background) => {
+            tex_image_2d(
+                background.width,
+                background.height,
+                background.buffer.as_ptr(),
+            );
+            true
+        }
         image::TargetMut::Image(hq_image) => {
             let width = hq_image.width;
             let height = hq_image.height;
             hq_image
                 .data
-                .get_or_wait(|buffer, _| tex_image_2d(width, height, buffer.as_ptr()));
+                .get_or_wait(|buffer, _| tex_image_2d(width, height, buffer.as_ptr()))
+                .is_some()
         }
-    })
+    });
+    if !handled {
+        gl::tex_image_2d(
+            target,
+            level,
+            internalformat,
+            width,
+            height,
+            border,
+            format,
+            typ,
+            data,
+        );
+    }
 }
 
 #[cfg(target_os = "linux")]
 extern "C" fn hq_tex_image_2d(
-    _target: gl::Enum,
-    _level: gl::Int,
-    _internalformat: gl::Int,
-    _width: gl::Sizei,
-    _height: gl::Sizei,
-    _border: gl::Int,
-    _format: gl::Enum,
-    _typ: gl::Enum,
-    _data: *const c_void,
+    target: gl::Enum,
+    level: gl::Int,
+    internalformat: gl::Int,
+    width: gl::Sizei,
+    height: gl::Sizei,
+    border: gl::Int,
+    format: gl::Enum,
+    typ: gl::Enum,
+    data: *const c_void,
 ) {
     fn tex_image_2d(width: u32, height: u32, ptr: *const u8) {
         gl::tex_image_2d(
@@ -646,26 +663,43 @@ extern "C" fn hq_tex_image_2d(
             ptr as *const _,
         );
     }
-    image::with_target_hq_image(|target_ref| match target_ref {
-        image::TargetMut::Background(background) => tex_image_2d(
-            background.width,
-            background.height,
-            background.buffer.as_ptr(),
-        ),
+    let handled = image::with_target_hq_image(|target_ref| match target_ref {
+        image::TargetMut::Background(background) => {
+            tex_image_2d(
+                background.width,
+                background.height,
+                background.buffer.as_ptr(),
+            );
+            true
+        }
         image::TargetMut::Image(hq_image) => {
             let width = hq_image.width;
             let height = hq_image.height;
             hq_image
                 .data
-                .get_or_wait(|buffer, _| tex_image_2d(width, height, buffer.as_ptr()));
+                .get_or_wait(|buffer, _| tex_image_2d(width, height, buffer.as_ptr()))
+                .is_some()
         }
-    })
+    });
+    if !handled {
+        gl::tex_image_2d(
+            target,
+            level,
+            internalformat,
+            width,
+            height,
+            border,
+            format,
+            typ,
+            data,
+        );
+    }
 }
 
 /// Sub-hook for glPixelStorei — adjusts row length for HQ image width.
 #[cfg(target_os = "windows")]
 extern "stdcall" fn hq_pixel_storei(pname: gl::Enum, param: gl::Int) {
-    image::with_target_hq_image(|target_ref| {
+    let handled = image::with_target_hq_image(|target_ref| {
         if pname == gl::UNPACK_ROW_LENGTH {
             let width = match target_ref {
                 image::TargetMut::Background(background) => background.width,
@@ -675,12 +709,16 @@ extern "stdcall" fn hq_pixel_storei(pname: gl::Enum, param: gl::Int) {
         } else {
             gl::pixel_storei(pname, param);
         }
-    })
+        true
+    });
+    if !handled {
+        gl::pixel_storei(pname, param);
+    }
 }
 
 #[cfg(target_os = "linux")]
 extern "C" fn hq_pixel_storei(pname: gl::Enum, param: gl::Int) {
-    image::with_target_hq_image(|target_ref| {
+    let handled = image::with_target_hq_image(|target_ref| {
         if pname == gl::UNPACK_ROW_LENGTH {
             let width = match target_ref {
                 image::TargetMut::Background(background) => background.width,
@@ -690,11 +728,15 @@ extern "C" fn hq_pixel_storei(pname: gl::Enum, param: gl::Int) {
         } else {
             gl::pixel_storei(pname, param);
         }
-    })
+        true
+    });
+    if !handled {
+        gl::pixel_storei(pname, param);
+    }
 }
 
 /// Wraps final scene draw to make the renderer toggle instant and
-/// to make the image smooth on lower res displays
+/// to make the image smooth on lower res displays.
 pub extern "C" fn render_scene(
     draw: *const grim::Draw,
     surface: *const grim::Surface,

@@ -611,21 +611,23 @@ pub fn get_target(surface_addr: SurfaceAddr) -> Option<Target> {
     }
 }
 
-pub fn with_target_hq_image<F: FnMut(TargetMut)>(mut f: F) {
+pub fn with_target_hq_image<F: FnMut(TargetMut) -> bool>(mut f: F) -> bool {
     let mut background = BACKGROUND.lock().expect("BACKGROUND lock poisoned");
     let mut hq_images = HQ_IMAGES.lock().expect("HQ_IMAGES lock poisoned");
     match TARGET.lock().expect("TARGET lock poisoned").as_mut() {
         Some(Target::Background) => {
             if let Some(background) = background.as_mut() {
                 f(TargetMut::Background(background))
+            } else {
+                false
             }
         }
         Some(Target::Image(image_addr)) => HqImage::with_loaded_or_else(
             *image_addr,
             &mut hq_images,
             |hq_image| f(TargetMut::Image(hq_image)),
-            |_| {},
+            |_| false,
         ),
-        _ => {}
+        _ => false,
     }
 }
