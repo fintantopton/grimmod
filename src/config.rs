@@ -1,6 +1,6 @@
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
-static CONFIG: Lazy<Config> = Lazy::new(Config::load);
+static CONFIG: LazyLock<Config> = LazyLock::new(Config::load);
 
 #[derive(Clone, serde::Deserialize)]
 pub struct Config {

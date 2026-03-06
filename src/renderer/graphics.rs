@@ -1,6 +1,6 @@
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_uint, c_void, CStr};
+use std::sync::LazyLock;
 use std::sync::Mutex;
 
 use crate::config::Config;
@@ -10,8 +10,8 @@ use crate::raw::{gl, grim};
 use crate::renderer::{image, video_cutouts};
 
 pub static DECOMPRESSED: Mutex<Option<ImageAddr>> = Mutex::new(None);
-pub static OVERLAYS: Lazy<Mutex<HashMap<SurfaceAddr, ImageAddr>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+pub static OVERLAYS: LazyLock<Mutex<HashMap<SurfaceAddr, ImageAddr>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 pub static SMUSH_SURFACE: Mutex<Option<SurfaceAddr>> = Mutex::new(None);
 
 #[derive(Clone, Copy, Default, Hash, Eq, PartialEq)]

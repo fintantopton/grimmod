@@ -4,20 +4,20 @@
 // - ELF symtab parsing via `goblin` for local symbols (t/b in nm output)
 // - GOT entry lookup for dynamically imported symbols (U in nm output)
 
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::sync::LazyLock;
 use std::sync::Mutex;
 
 use crate::debug;
 
 /// Cache of ELF local symbols: name -> address.
-static ELF_SYMBOLS: Lazy<Mutex<HashMap<String, usize>>> =
-    Lazy::new(|| Mutex::new(build_elf_symbol_map().unwrap_or_default()));
+static ELF_SYMBOLS: LazyLock<Mutex<HashMap<String, usize>>> =
+    LazyLock::new(|| Mutex::new(build_elf_symbol_map().unwrap_or_default()));
 
 /// Cache of GOT entries: symbol name -> GOT slot address.
-static GOT_ENTRIES: Lazy<Mutex<HashMap<String, usize>>> =
-    Lazy::new(|| Mutex::new(build_got_map().unwrap_or_default()));
+static GOT_ENTRIES: LazyLock<Mutex<HashMap<String, usize>>> =
+    LazyLock::new(|| Mutex::new(build_got_map().unwrap_or_default()));
 
 /// Find the path to the game executable.
 ///
@@ -51,7 +51,7 @@ fn find_game_exe_path() -> String {
     "/proc/self/exe".to_string()
 }
 
-static GAME_EXE_PATH: Lazy<String> = Lazy::new(find_game_exe_path);
+static GAME_EXE_PATH: LazyLock<String> = LazyLock::new(find_game_exe_path);
 
 /// Look up a global symbol via dlsym(RTLD_DEFAULT, ...).
 pub fn dlsym_lookup(name: &str) -> Option<usize> {

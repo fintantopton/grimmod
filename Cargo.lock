@@ -634,7 +634,6 @@ dependencies = [
  "libvpx-native-sys",
  "lightningscanner",
  "log",
- "once_cell",
  "paste",
  "png",
  "retour",
