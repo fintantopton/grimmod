@@ -1,7 +1,7 @@
 use lightningscanner::Scanner;
-use once_cell::sync::Lazy;
 use retour::RawDetour;
 use std::marker::PhantomData;
+use std::sync::LazyLock;
 use std::sync::Mutex;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::BOOL;
@@ -14,7 +14,7 @@ use windows::Win32::System::Threading::GetCurrentProcess;
 
 use crate::{debug, raw::process};
 
-pub static BASE_ADDRESS: Lazy<usize> = Lazy::new(|| base_address().unwrap_or(0));
+pub static BASE_ADDRESS: LazyLock<usize> = LazyLock::new(|| base_address().unwrap_or(0));
 
 pub fn base_address() -> Option<usize> {
     unsafe {

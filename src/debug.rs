@@ -1,15 +1,15 @@
-use once_cell::sync::Lazy;
 use std::ffi::CString;
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
+use std::sync::LazyLock;
 
 use crate::config::Config;
 use crate::raw::{gl, grim};
 
 const LOG_FILENAME: &str = "grimmod.log";
 
-static LOG_FILE: Lazy<Option<File>> = Lazy::new(|| {
+static LOG_FILE: LazyLock<Option<File>> = LazyLock::new(|| {
     OpenOptions::new()
         .write(true)
         .truncate(true)

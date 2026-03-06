@@ -1,8 +1,8 @@
 use glob::glob;
-use once_cell::sync::Lazy;
 use std::collections::HashSet;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::sync::Mutex;
 
 use crate::debug;
@@ -10,7 +10,7 @@ use crate::raw::grim;
 
 // The game guards the file handle list with a mutex so that is replicated here out of caution.
 // It also guards every individual file access with a mutex but that isn't needed here.
-static HANDLES: Lazy<Mutex<HashSet<usize>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+static HANDLES: LazyLock<Mutex<HashSet<usize>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 extern "C" {
     pub fn fopen(filename: *const c_char, mode: *const c_char) -> *mut c_void;

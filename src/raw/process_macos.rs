@@ -9,20 +9,20 @@
 // All C symbols have the `_` prefix in the Mach-O nlist (e.g., `_stdFileOpen`),
 // but dlsym does NOT require the prefix.
 
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::sync::LazyLock;
 use std::sync::Mutex;
 
 use crate::debug;
 
 /// Cache of Mach-O symbols: name (without leading _) -> address.
-static MACHO_SYMBOLS: Lazy<Mutex<HashMap<String, usize>>> =
-    Lazy::new(|| Mutex::new(build_macho_symbol_map().unwrap_or_default()));
+static MACHO_SYMBOLS: LazyLock<Mutex<HashMap<String, usize>>> =
+    LazyLock::new(|| Mutex::new(build_macho_symbol_map().unwrap_or_default()));
 
 /// Cache of lazy/non-lazy symbol pointer entries: name (without _) -> pointer slot address.
-static STUB_POINTERS: Lazy<Mutex<HashMap<String, usize>>> =
-    Lazy::new(|| Mutex::new(build_stub_pointer_map().unwrap_or_default()));
+static STUB_POINTERS: LazyLock<Mutex<HashMap<String, usize>>> =
+    LazyLock::new(|| Mutex::new(build_stub_pointer_map().unwrap_or_default()));
 
 /// Find the path to the game executable on macOS.
 ///
@@ -41,7 +41,7 @@ fn find_game_exe_path() -> String {
     }
 }
 
-static GAME_EXE_PATH: Lazy<String> = Lazy::new(find_game_exe_path);
+static GAME_EXE_PATH: LazyLock<String> = LazyLock::new(find_game_exe_path);
 
 /// Get the slide (ASLR offset) for the main executable image.
 ///
@@ -67,7 +67,7 @@ fn get_image_slide() -> isize {
     0
 }
 
-static IMAGE_SLIDE: Lazy<isize> = Lazy::new(get_image_slide);
+static IMAGE_SLIDE: LazyLock<isize> = LazyLock::new(get_image_slide);
 
 /// Look up a global symbol via dlsym(RTLD_DEFAULT, ...).
 ///

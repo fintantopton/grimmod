@@ -1,6 +1,6 @@
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::LazyLock;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 
@@ -17,11 +17,12 @@ use crate::renderer::{animation, video_cutouts};
 use crate::{debug, file};
 
 pub static BACKGROUND: Mutex<Option<Background>> = Mutex::new(None);
-pub static BACKGROUND_WRITES: Lazy<Mutex<BackgroundWrites>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+pub static BACKGROUND_WRITES: LazyLock<Mutex<BackgroundWrites>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 pub static TARGET: Mutex<Option<Target>> = Mutex::new(None);
 
-pub static HQ_IMAGES: Lazy<Mutex<Vec<HqImageContainer>>> = Lazy::new(|| Mutex::new(Vec::new()));
+pub static HQ_IMAGES: LazyLock<Mutex<Vec<HqImageContainer>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// Opens a PNG file with lenient CRC/checksum handling.
 /// The GrimHD mod PNG files have invalid IDAT CRC checksums, so we must
