@@ -8,7 +8,7 @@ use crate::{
 #[cfg(target_os = "windows")]
 use crate::raw::{memory::BASE_ADDRESS, process};
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 use std::ffi::{c_char, c_int};
 
 pub fn main() {
@@ -30,12 +30,6 @@ pub fn main() {
         misc::VERSION
     ));
 
-    #[cfg(target_os = "macos")]
-    debug::info(format!(
-        "GrimMod {} (macOS) attached via DYLD_INSERT_LIBRARIES",
-        misc::VERSION
-    ));
-
     if let Err(err) = initiate_startup() {
         debug::error(format!("GrimMod startup failed: {}", err));
     }
@@ -54,9 +48,9 @@ fn initiate_startup() -> Result<(), String> {
     grim::entry.hook(application_entry).string_err()
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn initiate_startup() -> Result<(), String> {
-    // On Linux/macOS, resolve all game functions by symbol name (no pattern scanning)
+    // On Linux, resolve all game functions by symbol name (no pattern scanning)
     grim::find_fns().string_err()?;
 
     // Resolve and hook main() for the next startup phase
@@ -75,7 +69,7 @@ fn startup() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn startup() -> Result<(), String> {
     // Bind SDL and GL functions via GOT/stub entries
     sdl::bind_static_fns().string_err()?;
@@ -131,9 +125,9 @@ extern "stdcall" fn application_entry() {
 
 /// Wraps the application entry to locate and bind now-loaded functions.
 ///
-/// On Linux/macOS this hooks main() instead of the Windows entry point.
+/// On Linux this hooks main() instead of the Windows entry point.
 /// Must accept and forward argc/argv to the real main().
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 extern "C" fn application_entry(argc: c_int, argv: *const *const c_char) {
     match startup() {
         Ok(_) => debug::info("Successfully initiated GrimMod feature hooks"),

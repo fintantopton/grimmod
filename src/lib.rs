@@ -41,10 +41,3 @@ mod windows_entry {
 fn grimmod_init() {
     init::main();
 }
-
-// macOS entry point: DYLD_INSERT_LIBRARIES constructor
-#[cfg(target_os = "macos")]
-#[ctor::ctor]
-fn grimmod_init() {
-    init::main();
-}

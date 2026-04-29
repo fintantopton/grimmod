@@ -53,7 +53,7 @@ indirect_fns! {
     extern "stdcall" fn clear(mask: u32);
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 indirect_fns! {
     #![bind_with(bind_static_fns)]
 
@@ -119,7 +119,7 @@ direct_fns! {
     extern "stdcall" fn stencil_mask(mask: Uint);
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 direct_fns! {
     #![bind_with(bind_dynamic_fns)]
 
@@ -223,7 +223,7 @@ indirect_fns! {
     );
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 indirect_fns! {
     #![bind_with(bind_glew_fns)]
 

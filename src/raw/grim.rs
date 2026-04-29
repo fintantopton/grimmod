@@ -14,7 +14,7 @@ direct_fns! {
     extern "stdcall" fn entry();
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 direct_fns! {
     // The main application entry point
     #[symbol("main")]
@@ -239,117 +239,6 @@ direct_fns! {
     extern "C" fn toggle_renderers();
 }
 
-// macOS: same engine, same symbol names as Linux, but 64-bit. The macOS Mach-O binary has
-// identical function names (some plain C, some C++ mangled — our Mach-O symbol
-// resolver handles both via demangling and _-prefix stripping).
-//
-// CRITICAL: draw_indexed_primitives param_3 is a zgIndexBuffer* (64-bit pointer).
-// On 32-bit Linux it was declared u32 (same size as pointer), but on 64-bit macOS
-// declaring it as u32 would truncate the pointer, causing a crash in DrawSetup
-// when the game tries to dereference the truncated index buffer pointer.
-//
-// CRITICAL: copy_image param_7 is LECRECT* (64-bit pointer on macOS).
-// C++ mangled: zg_RendererSoftware_BufferCopyImpl(..., LECRECT*, int)
-// Declaring as u32 truncates the pointer on 64-bit, causing SIGSEGV.
-#[cfg(target_os = "macos")]
-direct_fns! {
-    #![bind_with(find_fns)]
-
-    #[symbol("zg_Render_Initialize")]
-    extern "C" fn init_renderers();
-
-    #[symbol("stdFileOpen")]
-    extern "C" fn open_file(filename: *mut c_char, mode: *mut c_char) -> *mut c_void;
-    #[symbol("stdFileClose")]
-    extern "C" fn close_file(file: *mut c_void) -> c_int;
-    #[symbol("stdFileRead")]
-    extern "C" fn read_file(file: *mut c_void, dst: *mut c_void, size: usize) -> usize;
-
-    #[symbol("stdBitmap_Load")]
-    extern "C" fn open_bm_image(
-        filename: *const c_char,
-        param_2: u32,
-        param_3: u32,
-    ) -> *mut ImageContainer;
-
-    #[symbol("zg_Render_BufferCopyImpl")]
-    extern "C" fn copy_image(
-        dst_image: *mut Image,
-        dst_surface: *mut Surface,
-        src_image: *mut Image,
-        src_surface: *mut Surface,
-        x: u32,
-        y: u32,
-        param_7: usize,
-        param_8: u32,
-    );
-
-    #[symbol("sputRender_Decompress")]
-    extern "C" fn decompress_image(image: *const Image);
-
-    #[symbol("sputResource_BackgroundHandler")]
-    extern "C" fn manage_resource(resource: *mut Resource) -> c_int;
-
-    #[symbol("zg_RendererDeferred_GetCachedTextureFromColorVBuffer")]
-    extern "C" fn bind_image_surface(
-        image: *mut Image,
-        param_2: u32,
-        param_3: u32,
-        param_4: u32
-    ) -> *mut Surface;
-
-    #[symbol("zg_Surface_Upload")]
-    extern "C" fn surface_upload(surface: *mut Surface, image_data: *mut c_void);
-
-    #[symbol("zg_RenderContext_DrawSetup")]
-    extern "C" fn setup_draw(draw: *mut Draw, index_buffer: *const c_void);
-
-    #[symbol("zg_Shader_Apply")]
-    extern "C" fn set_draw_shader(draw: *mut Draw, shader: *mut Shader);
-
-    #[symbol("zg_Surface_Present")]
-    extern "C" fn render_scene(
-        draw: *const Draw,
-        surface: *const Surface,
-        transition: f32
-    );
-
-    // param_2 (rsi) and param_3 (rdx) must be pointer-sized on 64-bit.
-    // param_3 is actually a zgIndexBuffer* passed through to DrawSetup.
-    #[symbol("zg_RenderContext_DrawIndexedPrimitives")]
-    extern "C" fn draw_indexed_primitives(
-        draw: *mut Draw,
-        param_2: usize,
-        param_3: usize,
-        param_4: u32,
-        param_5: u32
-    );
-
-    #[symbol("zg_RenderContext_PushMarker")]
-    extern "C" fn marker(len: usize, message: *const c_char);
-
-    #[symbol("allocateDefaultBuffers")]
-    extern "C" fn init_base_buffer() -> c_uint;
-
-    #[symbol("zg_RendererSoftware_SetBuffers")]
-    extern "C" fn init_software_buffers();
-
-    #[symbol("sputSmush_Initialize")]
-    extern "C" fn init_smush_buffer();
-
-    #[symbol("sputRender_Close")]
-    extern "C" fn reset_intermediate_buffers();
-
-    #[symbol("SmushPlay_UpdateMovie")]
-    extern "C" fn decode_smush_frame();
-
-    #[symbol("loadRenderResources")]
-    extern "C" fn init_shaders_and_render_passes();
-
-    #[symbol("sputRender_ControlHandler")]
-    extern "C" fn toggle_renderers();
-}
-
 // ---- Static game values ----
 
 #[cfg(target_os = "windows")]
@@ -419,45 +308,10 @@ pub static GAME_WINDOW: Value<*const c_void, ()> = Value::from_symbol("GAME_WIND
 pub static RENDERING_MODE: Value<f32, ()> =
     Value::from_symbol("RENDERING_MODE", "zg_Render_useSoftwareRenderer");
 
-// macOS: same static game values as Linux — resolved by symbol name.
-// The macOS binary exports the same global variable symbols.
-#[cfg(target_os = "macos")]
-pub static BACK_BUFFER: Value<*const Image, ()> =
-    Value::from_symbol("BACK_BUFFER", "sputRender_pDrawBuffer");
-#[cfg(target_os = "macos")]
-pub static SMUSH_BUFFER: Value<*const Image, ()> = Value::from_symbol("SMUSH_BUFFER", "SmushBuf");
-#[cfg(target_os = "macos")]
-pub static DECOMPRESSION_BUFFER: Value<*const Image, ()> =
-    Value::from_symbol("DECOMPRESSION_BUFFER", "sputRender_pDecompressionBuffer");
-#[cfg(target_os = "macos")]
-pub static CLEAN_BUFFER: Value<*const Image, ()> =
-    Value::from_symbol("CLEAN_BUFFER", "sputRender_pCleanBuffer");
-#[cfg(target_os = "macos")]
-pub static CLEAN_Z_BUFFER: Value<*const Image, ()> =
-    Value::from_symbol("CLEAN_Z_BUFFER", "sputRender_pCleanZBuffer");
-#[cfg(target_os = "macos")]
-pub static ACTIVE_SMUSH_FRAME: Value<*const SmushFrame, ()> =
-    Value::from_symbol("ACTIVE_SMUSH_FRAME", "smush_pInternalBitmap");
-#[cfg(target_os = "macos")]
-pub static BITMAP_UNDERLAYS_RENDER_PASS: Value<*const RenderPass, ()> =
-    Value::from_symbol("BITMAP_UNDERLAYS_RENDER_PASS", "passBitmapUnderlays");
-#[cfg(target_os = "macos")]
-pub static TEXTURED_QUAD_SHADER: Value<*const Shader, ()> =
-    Value::from_symbol("TEXTURED_QUAD_SHADER", "pTexturedQuadShader");
-#[cfg(target_os = "macos")]
-#[allow(dead_code)]
-pub static GAME_WINDOW: Value<*const c_void, ()> = Value::from_symbol("GAME_WINDOW", "pWindow");
-#[cfg(target_os = "macos")]
-pub static RENDERING_MODE: Value<f32, ()> =
-    Value::from_symbol("RENDERING_MODE", "zg_Render_useSoftwareRenderer");
-
 // ---- Struct definitions ----
 //
-// These are #[repr(C)] and must match the game binary's ABI.
-// On 32-bit (Windows/Linux), pointer fields are 4 bytes.
-// On 64-bit (macOS), pointer fields are 8 bytes and alignment/padding differs.
-// Structs with pointer fields or platform-dependent padding have separate
-// definitions for 32-bit and 64-bit targets.
+// These are #[repr(C)] and must match the game binary's ABI (32-bit on
+// Windows/Linux, with 4-byte pointers).
 
 /// LLVM's libc++ std::vector — works on both 32-bit and 64-bit
 #[repr(C)]
@@ -500,11 +354,9 @@ pub struct RenderPass {
 // ---- RenderPassEntity (zgHardwareDrawCall) ----
 //
 // 32-bit (Windows/Linux): 252 bytes (0xFC)
-// 64-bit (macOS): ~332 bytes — pointers widen from 4→8 bytes, alignment padding changes.
 //
 // grimmod accesses: entity.surface
 
-#[cfg(not(target_os = "macos"))]
 #[repr(C)]
 pub struct RenderPassEntity {
     pub draw_type: u32,                    // +0x00
@@ -529,59 +381,12 @@ pub struct RenderPassEntity {
     pub scissor_rect: [u32; 4],            // +0xEC
 }
 
-/// macOS 64-bit layout of zgHardwareDrawCall, reversed from zg_RendererHardware_Draw_Issue.
-///
-/// Key offsets from disassembly:
-///   +0x00: draw_type       +0x08: shader_pipeline (ptr)
-///   +0x10: cbuf1[0]        +0x18: cbuf1[1]        +0x20: cbuf1[2]
-///   +0x28: cbuf2[0]        +0x30: cbuf2[1]        +0x38: cbuf2[2]
-///   +0x40: depth_func      +0x44: depth_enable
-///   +0x48: blend_src       +0x4C: blend_dst
-///   +0x50: texture_count
-///   +0x58: textures[0..8] (8 × 8-byte pointers) → surface is textures[0]
-///   +0x98: sampler_count
-///   +0x9C: samplers[8] (each 4 bytes)
-///   +0xBC..0x11F: unknown (100 bytes, 25 u32s)
-///   +0x120: draw_param_1   +0x124: draw_param_2
-///   +0x128: vertex_buffer (ptr)
-///   +0x130: indexed (ptr-sized)
-///   +0x138: scissor_enabled
-///   +0x13C: scissor_rect[4]
-#[cfg(target_os = "macos")]
-#[repr(C)]
-pub struct RenderPassEntity {
-    pub draw_type: u32,                    // +0x00
-    _pad_04: u32,                          // +0x04 (alignment padding)
-    pub shader_pipeline: *const c_void,    // +0x08
-    pub constant_buf_1: [usize; 3],        // +0x10 (3 × 8-byte values)
-    pub constant_buf_2: [usize; 3],        // +0x28
-    pub depth_func: u32,                   // +0x40
-    pub depth_enable: u32,                 // +0x44
-    pub blend_src: u32,                    // +0x48
-    pub blend_dst: u32,                    // +0x4C
-    pub texture_count: u32,                // +0x50
-    _pad_54: u32,                          // +0x54 (alignment before pointer array)
-    pub surface: *const Surface,           // +0x58 (textures[0])
-    pub textures_1_7: [*const Surface; 7], // +0x60
-    pub sampler_count: u32,                // +0x98
-    pub samplers: [u32; 8],                // +0x9C
-    pub _unknown_bc: [u32; 25],            // +0xBC (100 bytes)
-    pub draw_param_1: u32,                 // +0x120
-    pub draw_param_2: u32,                 // +0x124
-    pub vertex_buffer: *const c_void,      // +0x128
-    pub indexed_flag: usize,               // +0x130 (ptr-sized)
-    pub scissor_enabled: u32,              // +0x138
-    pub scissor_rect: [u32; 4],            // +0x13C
-}
-
 // ---- Draw (zgRenderContext) ----
 //
 // 32-bit: samplers at +0x28, shader at +0x48, surfaces at +0x68
-// 64-bit: shader at +0x68, surfaces at +0xa8, samplers at +0xe8
 //
 // grimmod accesses: draw.surfaces[0], draw.samplers[0], draw.shader (via set_draw_shader)
 
-#[cfg(not(target_os = "macos"))]
 #[repr(C)]
 pub struct Draw {
     pub field_1: u32,
@@ -599,39 +404,7 @@ pub struct Draw {
     pub surfaces: [*const Surface; 8], // +0x68
 }
 
-/// macOS 64-bit layout of zgRenderContext, reversed from bindTextures/SetTextures/SetSamplers.
-///
-/// Key offsets from disassembly:
-///   +0x18: vertex_buffer (ptr, from SetVertexBuffer)
-///   +0x44: sampler_ids[0..8] (8 × u32, from bindTextures: `movl 0x44(%r12,%rbx,4), %r13d`)
-///   +0x68: shader (*const Shader, from zg_Shader_Apply)
-///   +0xa0: texture_count (u32)
-///   +0xa8: surfaces[0..8] (8 × 8-byte pointers)
-///   +0xe8: sampler_state[0..8] (each 16 bytes, from applySamplerState)
-///   +0x19c-0x1a2: dirty flags
-#[cfg(target_os = "macos")]
-#[repr(C)]
-pub struct Draw {
-    pub _fields_00_43: [u8; 0x44], // +0x00 to +0x43
-
-    pub samplers: [c_uint; 8], // +0x44 (8 × 4 = 32 bytes, sampler GL IDs)
-    // +0x64 end of samplers
-    pub _pad_64_67: [u8; 4], // +0x64 to +0x67 (padding)
-
-    pub shader: *const Shader, // +0x68
-
-    pub _fields_70_9f: [u8; 0x30], // +0x70 to +0x9f (48 bytes)
-
-    pub _texture_count: u32, // +0xa0
-    _pad_a4: u32,            // +0xa4 (alignment)
-    pub surfaces: [*const Surface; 8], // +0xa8 (8 × 8 = 64 bytes, ends at +0xe8)
-
-                             // +0xe8: sampler state data (16 bytes per entry, 8 entries = 128 bytes)
-                             // grimmod does not need to access this
-}
-
-/// A compiled shader program — mostly fixed-size fields, same on 32/64-bit
-/// except for the pointer field. grimmod accesses shader indirectly through
+/// A compiled shader program. grimmod accesses shader indirectly through
 /// set_draw_shader and TEXTURED_QUAD_SHADER.
 #[repr(C)]
 pub struct Shader {
@@ -682,8 +455,6 @@ pub struct Image {
 
 /// A static or animated image container.
 /// The `images` field is a pointer, properly typed.
-/// On macOS 64-bit, `param_12` is a pointer (palette data), which shifts
-/// subsequent field offsets: image_count at +0x68, images at +0x80 (vs +0x64/+0x78 on 32-bit).
 #[repr(C)]
 pub struct ImageContainer {
     pub name: [c_char; 32],
@@ -697,9 +468,6 @@ pub struct ImageContainer {
     pub param_9: u32,
     pub param_10: u32,
     pub param_11: u32,
-    #[cfg(target_os = "macos")]
-    pub param_12: *const c_void,
-    #[cfg(not(target_os = "macos"))]
     pub param_12: u32,
     pub image_count: u32,
     pub param_14: u32,
@@ -711,7 +479,6 @@ pub struct ImageContainer {
 
 /// A texture in the OpenGL renderer.
 /// The `image_data` field is a pointer.
-/// On macOS 64-bit, `render_target` is a pointer (8 bytes), pushing `texture_id` to +0x28.
 #[repr(C)]
 pub struct Surface {
     pub width: i32,
@@ -721,9 +488,6 @@ pub struct Surface {
     pub uploaded: u32,
     pub param_6: u32,
     pub image_data: *mut c_void,
-    #[cfg(target_os = "macos")]
-    pub render_target: *mut c_void,
-    #[cfg(not(target_os = "macos"))]
     pub render_target: u32,
     pub texture_id: u32,
     pub param_10: u32,
