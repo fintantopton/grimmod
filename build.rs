@@ -15,6 +15,4 @@ fn main() {
 
     // On macOS, no special linker args needed.
     // The cdylib is injected via DYLD_INSERT_LIBRARIES.
-    // On Linux, no special linker args needed.
-    // The cdylib is injected via LD_PRELOAD.
 }

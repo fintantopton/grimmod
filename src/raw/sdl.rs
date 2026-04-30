@@ -33,7 +33,7 @@ mod platform {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 mod platform {
     use super::*;
 
@@ -73,34 +73,6 @@ mod wminfo {
         pub window: HWND,
         pub hdc: HDC,
         pub hinstance: HMODULE,
-    }
-}
-
-#[cfg(target_os = "linux")]
-mod wminfo {
-    use std::ffi::c_void;
-
-    /// SDL_SysWMinfo for Linux/X11.
-    ///
-    /// The Windows version has HWND/HDC/HMODULE fields. On Linux under X11,
-    /// the relevant fields are the X11 Display* and Window handle.
-    #[repr(C)]
-    pub struct SysWminfo {
-        pub version: u32,
-        pub subsystem: u32,
-        pub display: *mut c_void,
-        pub window: u64, // X11 Window is a 32-bit XID, but padded
-    }
-
-    impl Default for SysWminfo {
-        fn default() -> Self {
-            SysWminfo {
-                version: 0,
-                subsystem: 0,
-                display: std::ptr::null_mut(),
-                window: 0,
-            }
-        }
     }
 }
 
@@ -166,7 +138,7 @@ pub fn bind_static_fns() -> Result<(), BindError> {
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub fn bind_static_fns() -> Result<(), BindError> {
     set_swap_interval.bind_got_entry("SDL_GL_SetSwapInterval")?;
     create_window.bind_got_entry("SDL_CreateWindow")?;

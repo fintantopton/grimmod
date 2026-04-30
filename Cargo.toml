@@ -38,14 +38,6 @@ features = [
     "Win32_UI_WindowsAndMessaging",
 ]
 
-[target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2"
-goblin = "0.10"
-ctor = "0.6"
-png = "0.18"
-log = "0.4"
-env_logger = "0.11"
-
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 goblin = "0.10"

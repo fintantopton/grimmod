@@ -14,7 +14,7 @@ direct_fns! {
     extern "stdcall" fn entry();
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 direct_fns! {
     // The main application entry point
     #[symbol("main")]
@@ -142,110 +142,8 @@ direct_fns! {
     extern "C" fn toggle_renderers();
 }
 
-#[cfg(target_os = "linux")]
-direct_fns! {
-    #![bind_with(find_fns)]
-
-    #[symbol("zg_Render_Initialize")]
-    extern "C" fn init_renderers();
-
-    #[symbol("stdFileOpen")]
-    extern "C" fn open_file(filename: *mut c_char, mode: *mut c_char) -> *mut c_void;
-    #[symbol("stdFileClose")]
-    extern "C" fn close_file(file: *mut c_void) -> c_int;
-    #[symbol("stdFileRead")]
-    extern "C" fn read_file(file: *mut c_void, dst: *mut c_void, size: usize) -> usize;
-
-    #[symbol("stdBitmap_Load")]
-    extern "C" fn open_bm_image(
-        filename: *const c_char,
-        param_2: u32,
-        param_3: u32,
-    ) -> *mut ImageContainer;
-
-    #[symbol("zg_Render_BufferCopyImpl")]
-    extern "C" fn copy_image(
-        dst_image: *mut Image,
-        dst_surface: *mut Surface,
-        src_image: *mut Image,
-        src_surface: *mut Surface,
-        x: u32,
-        y: u32,
-        param_7: u32,
-        param_8: u32,
-    );
-
-    #[symbol("sputRender_Decompress")]
-    extern "C" fn decompress_image(image: *const Image);
-
-    #[symbol("sputResource_BackgroundHandler")]
-    extern "C" fn manage_resource(resource: *mut Resource) -> c_int;
-
-    #[symbol("zg_RendererDeferred_GetCachedTextureFromColorVBuffer")]
-    extern "C" fn bind_image_surface(
-        image: *mut Image,
-        param_2: u32,
-        param_3: u32,
-        param_4: u32
-    ) -> *mut Surface;
-
-    #[symbol("zg_Surface_Upload")]
-    extern "C" fn surface_upload(surface: *mut Surface, image_data: *mut c_void);
-
-    #[symbol("zg_RenderContext_DrawSetup")]
-    extern "C" fn setup_draw(draw: *mut Draw, index_buffer: *const c_void);
-
-    #[symbol("zg_Shader_Apply")]
-    extern "C" fn set_draw_shader(draw: *mut Draw, shader: *mut Shader);
-
-    #[symbol("zg_Surface_Present")]
-    extern "C" fn render_scene(
-        draw: *const Draw,
-        surface: *const Surface,
-        transition: f32
-    );
-
-    #[symbol("zg_RenderContext_DrawIndexedPrimitives")]
-    extern "C" fn draw_indexed_primitives(
-        draw: *mut Draw,
-        param_2: u32,
-        param_3: u32,
-        param_4: u32,
-        param_5: u32
-    );
-
-    #[symbol("zg_RenderContext_PushMarker")]
-    extern "C" fn marker(len: usize, message: *const c_char);
-
-    #[symbol("allocateDefaultBuffers")]
-    extern "C" fn init_base_buffer() -> c_uint;
-
-    #[symbol("zg_RendererSoftware_SetBuffers")]
-    extern "C" fn init_software_buffers();
-
-    #[symbol("sputSmush_Initialize")]
-    extern "C" fn init_smush_buffer();
-
-    #[symbol("sputRender_Close")]
-    extern "C" fn reset_intermediate_buffers();
-
-    #[symbol("SmushPlay_UpdateMovie")]
-    extern "C" fn decode_smush_frame();
-
-    #[symbol("loadRenderResources")]
-    extern "C" fn init_shaders_and_render_passes();
-
-    #[symbol("sputRender_ControlHandler")]
-    extern "C" fn toggle_renderers();
-}
-
-// macOS: same engine, same symbol names as Linux, but 64-bit. The macOS Mach-O binary has
-// identical function names (some plain C, some C++ mangled — our Mach-O symbol
-// resolver handles both via demangling and _-prefix stripping).
-//
 // CRITICAL: draw_indexed_primitives param_3 is a zgIndexBuffer* (64-bit pointer).
-// On 32-bit Linux it was declared u32 (same size as pointer), but on 64-bit macOS
-// declaring it as u32 would truncate the pointer, causing a crash in DrawSetup
+// Declaring it as u32 would truncate the pointer, causing a crash in DrawSetup
 // when the game tries to dereference the truncated index buffer pointer.
 //
 // CRITICAL: copy_image param_7 is LECRECT* (64-bit pointer on macOS).
@@ -390,37 +288,8 @@ pub static mut GAME_WINDOW: Value<*const c_void, InitBaseBuffer> =
 pub static mut RENDERING_MODE: Value<f32, ToggleRenderers> =
     Value::new("RENDERING_MODE", &toggle_renderers, 0x5C);
 
-#[cfg(target_os = "linux")]
-pub static BACK_BUFFER: Value<*const Image, ()> =
-    Value::from_symbol("BACK_BUFFER", "sputRender_pDrawBuffer");
-#[cfg(target_os = "linux")]
-pub static SMUSH_BUFFER: Value<*const Image, ()> = Value::from_symbol("SMUSH_BUFFER", "SmushBuf");
-#[cfg(target_os = "linux")]
-pub static DECOMPRESSION_BUFFER: Value<*const Image, ()> =
-    Value::from_symbol("DECOMPRESSION_BUFFER", "sputRender_pDecompressionBuffer");
-#[cfg(target_os = "linux")]
-pub static CLEAN_BUFFER: Value<*const Image, ()> =
-    Value::from_symbol("CLEAN_BUFFER", "sputRender_pCleanBuffer");
-#[cfg(target_os = "linux")]
-pub static CLEAN_Z_BUFFER: Value<*const Image, ()> =
-    Value::from_symbol("CLEAN_Z_BUFFER", "sputRender_pCleanZBuffer");
-#[cfg(target_os = "linux")]
-pub static ACTIVE_SMUSH_FRAME: Value<*const SmushFrame, ()> =
-    Value::from_symbol("ACTIVE_SMUSH_FRAME", "smush_pInternalBitmap");
-#[cfg(target_os = "linux")]
-pub static BITMAP_UNDERLAYS_RENDER_PASS: Value<*const RenderPass, ()> =
-    Value::from_symbol("BITMAP_UNDERLAYS_RENDER_PASS", "passBitmapUnderlays");
-#[cfg(target_os = "linux")]
-pub static TEXTURED_QUAD_SHADER: Value<*const Shader, ()> =
-    Value::from_symbol("TEXTURED_QUAD_SHADER", "pTexturedQuadShader");
-#[cfg(target_os = "linux")]
-pub static GAME_WINDOW: Value<*const c_void, ()> = Value::from_symbol("GAME_WINDOW", "pWindow");
-#[cfg(target_os = "linux")]
-pub static RENDERING_MODE: Value<f32, ()> =
-    Value::from_symbol("RENDERING_MODE", "zg_Render_useSoftwareRenderer");
-
-// macOS: same static game values as Linux — resolved by symbol name.
-// The macOS binary exports the same global variable symbols.
+// macOS resolves these symbols by name. The Mach-O binary exports the
+// same global variable symbols.
 #[cfg(target_os = "macos")]
 pub static BACK_BUFFER: Value<*const Image, ()> =
     Value::from_symbol("BACK_BUFFER", "sputRender_pDrawBuffer");
@@ -454,8 +323,8 @@ pub static RENDERING_MODE: Value<f32, ()> =
 // ---- Struct definitions ----
 //
 // These are #[repr(C)] and must match the game binary's ABI.
-// On 32-bit (Windows/Linux), pointer fields are 4 bytes.
-// On 64-bit (macOS), pointer fields are 8 bytes and alignment/padding differs.
+// On 32-bit Windows, pointer fields are 4 bytes.
+// On 64-bit macOS, pointer fields are 8 bytes and alignment/padding differs.
 // Structs with pointer fields or platform-dependent padding have separate
 // definitions for 32-bit and 64-bit targets.
 
@@ -499,8 +368,8 @@ pub struct RenderPass {
 
 // ---- RenderPassEntity (zgHardwareDrawCall) ----
 //
-// 32-bit (Windows/Linux): 252 bytes (0xFC)
-// 64-bit (macOS): ~332 bytes — pointers widen from 4→8 bytes, alignment padding changes.
+// 32-bit Windows: 252 bytes (0xFC)
+// 64-bit macOS: ~332 bytes — pointers widen from 4→8 bytes, alignment padding changes.
 //
 // grimmod accesses: entity.surface
 

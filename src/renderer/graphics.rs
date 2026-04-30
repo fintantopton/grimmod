@@ -84,7 +84,7 @@ impl ImageAddr {
         {
             self.0 == unsafe { grim::BACK_BUFFER.addr() }
         }
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             self.0 == unsafe { grim::BACK_BUFFER.inner_addr() }
         }
@@ -268,9 +268,6 @@ pub fn unpair_overlay_surfaces(hq_image_container: &image::HqImageContainer) {
 /// atomic flags to decide whether to apply custom behavior or pass through.
 /// This avoids repeated hook/unhook cycles that each trigger a
 /// mach_vm_protect kernel trap on macOS (4-6 traps per frame eliminated).
-///
-/// On Linux/Windows, we use the traditional per-frame hook/unhook pattern
-/// instead, to isolate persistent hooks as a macOS-only optimization for now.
 #[cfg(target_os = "macos")]
 pub fn install_persistent_gl_hooks() {
     if let Err(e) = gl::tex_image_2d.hook(persistent_tex_image_2d as gl::TexImage2d) {
@@ -298,9 +295,9 @@ pub fn install_persistent_gl_hooks() {
     debug::info("Installed persistent GL sub-hooks (flag-gated, no per-frame kernel traps)");
 }
 
-/// On Linux/Windows, persistent GL hooks are not used. The per-frame
+/// On Windows, persistent GL hooks are not used. The per-frame
 /// hook/unhook pattern is used instead (in surface_upload, render_scene, etc.).
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 pub fn install_persistent_gl_hooks() {
     debug::info("Persistent GL sub-hooks disabled on this platform (using per-frame hook/unhook)");
 }
@@ -526,19 +523,6 @@ pub extern "stdcall" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint)
     perf::end(t, &perf::DELETE_TEXTURES);
 }
 
-#[cfg(target_os = "linux")]
-pub extern "C" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint) {
-    let t = perf::begin();
-    let surface_addr = SurfaceAddr(textures as usize - 0x20);
-    OVERLAYS
-        .lock()
-        .expect("OVERLAYS lock poisoned")
-        .remove(&surface_addr);
-
-    gl::delete_textures(n, textures);
-    perf::end(t, &perf::DELETE_TEXTURES);
-}
-
 #[cfg(target_os = "macos")]
 pub extern "C" fn delete_textures(n: gl::Sizei, textures: *const gl::Uint) {
     let t = perf::begin();
@@ -595,7 +579,7 @@ pub extern "C" fn setup_draw(draw: *mut grim::Draw, index_buffer: *const c_void)
 ///
 /// On 64-bit macOS, param_2 (rsi) and param_3 (rdx) must be pointer-sized because
 /// param_3 is actually a zgIndexBuffer* that gets passed through to DrawSetup.
-/// On 32-bit Linux/Windows, u32 == pointer size so this doesn't matter.
+/// On 32-bit Windows, u32 == pointer size so this doesn't matter.
 #[cfg(not(target_os = "macos"))]
 pub extern "C" fn draw_indexed_primitives(
     draw: *mut grim::Draw,
@@ -644,24 +628,6 @@ pub extern "C" fn draw_indexed_primitives(
 /// Hooks the opengl draw call for videos to perform a stencil test for cutouts.
 ///
 /// macOS: persistent sub-hook, uses STENCIL_DRAW_ACTIVE flag.
-/// Linux/Windows: per-frame hook that unhooks itself after use.
-#[cfg(target_os = "windows")]
-extern "stdcall" fn persistent_draw_elements_base_vertex(
-    mode: gl::Enum,
-    count: gl::Sizei,
-    typ: gl::Enum,
-    indicies: *mut c_void,
-    basevertex: gl::Int,
-) {
-    if STENCIL_DRAW_ACTIVE.swap(false, Ordering::Acquire) {
-        video_cutouts::with_stencil(|| {
-            gl::draw_elements_base_vertex(mode, count, typ, indicies, basevertex);
-        });
-    } else {
-        gl::draw_elements_base_vertex(mode, count, typ, indicies, basevertex);
-    }
-}
-
 #[cfg(target_os = "macos")]
 extern "C" fn persistent_draw_elements_base_vertex(
     mode: gl::Enum,
@@ -676,24 +642,6 @@ extern "C" fn persistent_draw_elements_base_vertex(
         });
     } else {
         gl::draw_elements_base_vertex(mode, count, typ, indicies, basevertex);
-    }
-}
-
-/// Per-frame hook for draw_elements_base_vertex on Linux — unhooks itself after use.
-#[cfg(target_os = "linux")]
-extern "C" fn draw_elements_base_vertex(
-    mode: gl::Enum,
-    count: gl::Sizei,
-    typ: gl::Enum,
-    indicies: *mut c_void,
-    basevertex: gl::Int,
-) {
-    video_cutouts::with_stencil(|| {
-        gl::draw_elements_base_vertex(mode, count, typ, indicies, basevertex);
-    });
-
-    if let Err(e) = gl::draw_elements_base_vertex.unhook() {
-        debug::error(format!("Failed to unhook draw_elements_base_vertex: {}", e));
     }
 }
 
@@ -759,78 +707,6 @@ pub extern "C" fn surface_upload(surface: *mut grim::Surface, image_data: *mut c
 
 /// Persistent sub-hook for glTexImage2D — replaces texture data with HQ
 /// version when HQ_UPLOAD_ACTIVE flag is set, otherwise passes through.
-#[cfg(target_os = "windows")]
-extern "stdcall" fn persistent_tex_image_2d(
-    target: gl::Enum,
-    level: gl::Int,
-    internalformat: gl::Int,
-    width: gl::Sizei,
-    height: gl::Sizei,
-    border: gl::Int,
-    format: gl::Enum,
-    typ: gl::Enum,
-    data: *const c_void,
-) {
-    if !HQ_UPLOAD_ACTIVE.load(Ordering::Acquire) {
-        gl::tex_image_2d(
-            target,
-            level,
-            internalformat,
-            width,
-            height,
-            border,
-            format,
-            typ,
-            data,
-        );
-        return;
-    }
-    fn tex_image_2d(width: u32, height: u32, ptr: *const u8) {
-        gl::tex_image_2d(
-            gl::TEXTURE_2D,
-            0,
-            gl::RGBA8 as gl::Int,
-            width as gl::Int,
-            height as gl::Int,
-            0,
-            gl::RGBA,
-            gl::UNSIGNED_BYTE,
-            ptr as *const _,
-        )
-    }
-    let handled = image::with_target_hq_image(|target_ref| match target_ref {
-        image::TargetMut::Background(background) => {
-            tex_image_2d(
-                background.width,
-                background.height,
-                background.buffer.as_ptr(),
-            );
-            true
-        }
-        image::TargetMut::Image(hq_image) => {
-            let width = hq_image.width;
-            let height = hq_image.height;
-            hq_image
-                .data
-                .get_or_wait(|buffer, _| tex_image_2d(width, height, buffer.as_ptr()))
-                .is_some()
-        }
-    });
-    if !handled {
-        gl::tex_image_2d(
-            target,
-            level,
-            internalformat,
-            width,
-            height,
-            border,
-            format,
-            typ,
-            data,
-        );
-    }
-}
-
 #[cfg(target_os = "macos")]
 extern "C" fn persistent_tex_image_2d(
     target: gl::Enum,
@@ -905,29 +781,6 @@ extern "C" fn persistent_tex_image_2d(
 
 /// Persistent sub-hook for glPixelStorei — adjusts row length for HQ
 /// image width when HQ_UPLOAD_ACTIVE flag is set, otherwise passes through.
-#[cfg(target_os = "windows")]
-extern "stdcall" fn persistent_pixel_storei(pname: gl::Enum, param: gl::Int) {
-    if !HQ_UPLOAD_ACTIVE.load(Ordering::Acquire) {
-        gl::pixel_storei(pname, param);
-        return;
-    }
-    let handled = image::with_target_hq_image(|target_ref| {
-        if pname == gl::UNPACK_ROW_LENGTH {
-            let width = match target_ref {
-                image::TargetMut::Background(background) => background.width,
-                image::TargetMut::Image(hq_image) => hq_image.width,
-            };
-            gl::pixel_storei(gl::UNPACK_ROW_LENGTH, width as gl::Int);
-        } else {
-            gl::pixel_storei(pname, param);
-        }
-        true
-    });
-    if !handled {
-        gl::pixel_storei(pname, param);
-    }
-}
-
 #[cfg(target_os = "macos")]
 extern "C" fn persistent_pixel_storei(pname: gl::Enum, param: gl::Int) {
     if !HQ_UPLOAD_ACTIVE.load(Ordering::Acquire) {
@@ -951,87 +804,11 @@ extern "C" fn persistent_pixel_storei(pname: gl::Enum, param: gl::Int) {
     }
 }
 
-/// Per-frame sub-hook for glTexImage2D on Linux — replaces texture data with
-/// HQ version. Only installed during surface_upload, so no flag check needed.
-#[cfg(target_os = "linux")]
-extern "C" fn hq_tex_image_2d(
-    _target: gl::Enum,
-    _level: gl::Int,
-    _internalformat: gl::Int,
-    _width: gl::Sizei,
-    _height: gl::Sizei,
-    _border: gl::Int,
-    _format: gl::Enum,
-    _typ: gl::Enum,
-    _data: *const c_void,
-) {
-    fn tex_image_2d(width: u32, height: u32, ptr: *const u8) {
-        gl::tex_image_2d(
-            gl::TEXTURE_2D,
-            0,
-            gl::RGBA8 as gl::Int,
-            width as gl::Int,
-            height as gl::Int,
-            0,
-            gl::RGBA,
-            gl::UNSIGNED_BYTE,
-            ptr as *const _,
-        );
-    }
-    image::with_target_hq_image(|target_ref| match target_ref {
-        image::TargetMut::Background(background) => {
-            tex_image_2d(
-                background.width,
-                background.height,
-                background.buffer.as_ptr(),
-            );
-            true
-        }
-        image::TargetMut::Image(hq_image) => {
-            let width = hq_image.width;
-            let height = hq_image.height;
-            hq_image
-                .data
-                .get_or_wait(|buffer, _| tex_image_2d(width, height, buffer.as_ptr()))
-                .is_some()
-        }
-    });
-}
-
-/// Per-frame sub-hook for glPixelStorei on Linux — adjusts row length for HQ
-/// image width. Only installed during surface_upload, so no flag check needed.
-#[cfg(target_os = "linux")]
-extern "C" fn hq_pixel_storei(pname: gl::Enum, param: gl::Int) {
-    image::with_target_hq_image(|target_ref| {
-        if pname == gl::UNPACK_ROW_LENGTH {
-            let width = match target_ref {
-                image::TargetMut::Background(background) => background.width,
-                image::TargetMut::Image(hq_image) => hq_image.width,
-            };
-            gl::pixel_storei(gl::UNPACK_ROW_LENGTH, width as gl::Int);
-        } else {
-            gl::pixel_storei(pname, param);
-        }
-        true
-    });
-}
-
-/// Per-frame sub-hook for glSamplerParameteri on Linux — forces LINEAR
-/// filtering. Only installed during render_scene, so no flag check needed.
-#[cfg(target_os = "linux")]
-extern "C" fn forced_linear_sampler_parameteri(target: gl::Enum, pname: gl::Enum, param: gl::Int) {
-    if pname == gl::TEXTURE_MIN_FILTER || pname == gl::TEXTURE_MAG_FILTER {
-        gl::sampler_parameteri(target, pname, gl::LINEAR as gl::Int);
-    } else {
-        gl::sampler_parameteri(target, pname, param);
-    }
-}
-
 /// Wraps final scene draw to make the renderer toggle instant and
 /// to make the image smooth on lower res displays.
 ///
 /// On macOS, relies on persistent sampler_parameteri hook gated by FORCE_LINEAR_ACTIVE.
-/// On Linux/Windows, uses per-frame hook/unhook of sampler_parameteri.
+/// On Windows, uses per-frame hook/unhook of sampler_parameteri.
 pub extern "C" fn render_scene(
     draw: *const grim::Draw,
     surface: *const grim::Surface,
@@ -1076,23 +853,6 @@ pub extern "C" fn render_scene(
 
 /// Persistent sub-hook for glSamplerParameteri — forces LINEAR filtering
 /// only when FORCE_LINEAR_ACTIVE flag is set, otherwise passes through.
-#[cfg(target_os = "windows")]
-extern "stdcall" fn persistent_sampler_parameteri(
-    target: gl::Enum,
-    pname: gl::Enum,
-    param: gl::Int,
-) {
-    if !FORCE_LINEAR_ACTIVE.load(Ordering::Acquire) {
-        gl::sampler_parameteri(target, pname, param);
-        return;
-    }
-    if pname == gl::TEXTURE_MIN_FILTER || pname == gl::TEXTURE_MAG_FILTER {
-        gl::sampler_parameteri(target, pname, gl::LINEAR as gl::Int);
-    } else {
-        gl::sampler_parameteri(target, pname, param);
-    }
-}
-
 #[cfg(target_os = "macos")]
 extern "C" fn persistent_sampler_parameteri(target: gl::Enum, pname: gl::Enum, param: gl::Int) {
     if !FORCE_LINEAR_ACTIVE.load(Ordering::Acquire) {
@@ -1132,7 +892,7 @@ pub extern "stdcall" fn compressed_tex_image2d(
     perf::end(t, &perf::COMPRESSED_TEX_IMAGE);
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub extern "C" fn compressed_tex_image2d(
     target: gl::Enum,
     level: gl::Int,

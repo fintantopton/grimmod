@@ -35,13 +35,6 @@ mod windows_entry {
     }
 }
 
-// Linux entry point: LD_PRELOAD constructor
-#[cfg(target_os = "linux")]
-#[ctor::ctor]
-fn grimmod_init() {
-    init::main();
-}
-
 // macOS entry point: DYLD_INSERT_LIBRARIES constructor
 #[cfg(target_os = "macos")]
 #[ctor::ctor]
