@@ -1,5 +1,6 @@
 # On Windows, default to 32-bit MSVC target.
 # On Linux, build with: cargo +nightly build --target i686-unknown-linux-gnu
+# On macOS, build with: cargo +nightly build --target x86_64-apple-darwin
 #
 # Uncomment below to default to Windows target:
 # [build]

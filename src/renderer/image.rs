@@ -4,9 +4,9 @@ use std::sync::LazyLock;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::fs::File;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io::BufReader;
 
 use crate::config::Config;
@@ -27,7 +27,7 @@ pub static HQ_IMAGES: LazyLock<Mutex<Vec<HqImageContainer>>> =
 /// Opens a PNG file with lenient CRC/checksum handling.
 /// The GrimHD mod PNG files have invalid IDAT CRC checksums, so we must
 /// use the `png` crate directly with `ignore_checksums(true)`.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn open_png_lenient(path: &Path) -> Result<(Vec<u8>, u32, u32, bool), String> {
     let file = File::open(path).map_err(|e| format!("open: {}", e))?;
     let mut decoder = png::Decoder::new(BufReader::new(file));
@@ -95,7 +95,7 @@ fn open_png_lenient(path: &Path) -> Result<(Vec<u8>, u32, u32, bool), String> {
 }
 
 /// Gets image dimensions using the png crate with lenient CRC handling.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn png_dimensions(path: &Path) -> Result<(u32, u32), String> {
     let file = File::open(path).map_err(|e| format!("open: {}", e))?;
     let mut decoder = png::Decoder::new(BufReader::new(file));
@@ -118,6 +118,7 @@ pub enum TargetMut<'a> {
     Image(&'a mut HqImage),
 }
 
+#[allow(dead_code)]
 pub struct HqImageContainer {
     pub name: String,
     pub original_addr: ImageContainerAddr,
@@ -219,7 +220,7 @@ impl HqImage {
         }])
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn open_image(name: &str, images: &[Image]) -> Option<Vec<HqImage>> {
         let path = file::find_modded(&format!("{}.png", name))?;
         if images.len() != 1 {

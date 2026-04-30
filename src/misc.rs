@@ -9,6 +9,7 @@ use crate::raw::sdl;
 pub const VERSION: Version = Version::new(1, 1, 0);
 
 #[derive(serde::Deserialize)]
+#[allow(dead_code)]
 pub struct ModInfo {
     pub name: String,
     pub version: Version,

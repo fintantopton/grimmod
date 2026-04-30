@@ -19,8 +19,8 @@ static LOG_FILE: LazyLock<Option<File>> = LazyLock::new(|| {
 });
 
 fn write(message: fmt::Arguments) -> Option<()> {
-    // On Linux, also print to stderr for easy debugging under LD_PRELOAD
-    #[cfg(target_os = "linux")]
+    // On Linux/macOS, also print to stderr for easy debugging under LD_PRELOAD/DYLD_INSERT_LIBRARIES
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     eprintln!("[grimmod] {}", message);
 
     if let Some(mut log_file) = LOG_FILE.as_ref() {

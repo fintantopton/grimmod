@@ -137,11 +137,11 @@ macro_rules! proxy {
     };
 }
 
-// === Linux macros ===
+// === Linux / macOS macros ===
 // Uses string-literal symbols, extern "C" only,
-// symbol-name resolution via ELF symtab, GOT entry binding.
+// symbol-name resolution via ELF/Mach-O symtab, GOT/stub-pointer entry binding.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[macro_export]
 macro_rules! direct_fn_def {
     (
@@ -162,7 +162,7 @@ macro_rules! direct_fn_def {
     (@symbol) => { None };
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[macro_export]
 macro_rules! direct_fns {
     // With bind_with
@@ -212,7 +212,7 @@ macro_rules! direct_fns {
     };
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[macro_export]
 macro_rules! indirect_fn_defs {
     (
@@ -230,7 +230,7 @@ macro_rules! indirect_fn_defs {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[macro_export]
 macro_rules! indirect_fns {
     (

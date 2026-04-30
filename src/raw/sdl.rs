@@ -33,7 +33,7 @@ mod platform {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod platform {
     use super::*;
 
@@ -104,6 +104,31 @@ mod wminfo {
     }
 }
 
+#[cfg(target_os = "macos")]
+mod wminfo {
+    use std::ffi::c_void;
+
+    /// SDL_SysWMinfo for macOS/Cocoa.
+    ///
+    /// The Cocoa subsystem only exposes a single NSWindow pointer.
+    #[repr(C)]
+    pub struct SysWminfo {
+        pub version: u32,
+        pub subsystem: u32,
+        pub window: *mut c_void, // NSWindow*
+    }
+
+    impl Default for SysWminfo {
+        fn default() -> Self {
+            SysWminfo {
+                version: 0,
+                subsystem: 0,
+                window: std::ptr::null_mut(),
+            }
+        }
+    }
+}
+
 pub use wminfo::SysWminfo;
 
 // ---- Shared types ----
@@ -125,6 +150,7 @@ pub struct Rect {
     pub h: c_int,
 }
 
+#[allow(dead_code)]
 pub const WINDOW_ALLOW_HIGHDPI: u32 = 0x00002000;
 
 // ---- Binding functions ----
@@ -140,7 +166,7 @@ pub fn bind_static_fns() -> Result<(), BindError> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn bind_static_fns() -> Result<(), BindError> {
     set_swap_interval.bind_got_entry("SDL_GL_SetSwapInterval")?;
     create_window.bind_got_entry("SDL_CreateWindow")?;
