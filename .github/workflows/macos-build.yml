@@ -48,8 +48,16 @@ jobs:
           key: ${{ runner.os }}-cargo-build-target-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-build-target-${{ matrix.target }}-
+
+      # --- FIX: Install required system dependencies ---
+      - name: Install system dependencies
+        run: |
+          brew install libvpx pkg-config
       
+      # --- FIX: Pass PKG_CONFIG_PATH to cargo build ---
       - name: Build (${{ matrix.target }})
+        env:
+          PKG_CONFIG_PATH: "/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig"
         run: |
           cargo build --release --lib --target ${{ matrix.target }}
       
