@@ -3,18 +3,16 @@ name: macOS Build (Intel x86_64 Only)
 on:
   push:
     branches:
-      - macOS
+      - '**'
     tags:
       - 'v*'
   pull_request:
-    branches:
-      - macOS
   workflow_dispatch:
 
 jobs:
   build:
     name: Build x86_64-apple-darwin
-    runs-on: macos-latest # Runs on fast Apple Silicon runner to avoid Intel queues
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       
@@ -52,12 +50,18 @@ jobs:
           # Ensure Rosetta 2 is active
           softwareupdate --install-rosetta --agree-to-license || true
           
-          # Install isolated Intel Homebrew inside /usr/local
+          # Download Intel Homebrew into /usr/local
           sudo mkdir -p /usr/local/Homebrew
           curl -L https://github.com/Homebrew/brew/tarball/master | sudo tar xz --strip-components 1 -C /usr/local/Homebrew
           sudo ln -sf /usr/local/Homebrew/bin/brew /usr/local/bin/brew
           
-          # Install Intel-compatible libvpx and pkg-config
+          # Create and fix ALL directories brew needs to write to
+          sudo mkdir -p /usr/local/var/homebrew/locks
+          sudo chown -R runner /usr/local/var
+          sudo chown -R runner /usr/local/Homebrew
+          sudo chown -R runner /usr/local/bin
+          
+          # Install x86_64 libvpx and pkg-config under Rosetta
           arch -x86_64 /usr/local/bin/brew install libvpx pkg-config
       
       - name: Build (x86_64-apple-darwin)
