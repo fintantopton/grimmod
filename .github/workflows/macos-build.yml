@@ -1,4 +1,4 @@
-name: macOS Build
+name: macOS Build (Intel x86_64 Only)
 
 on:
   push:
@@ -13,105 +13,73 @@ on:
 
 jobs:
   build:
-    name: Build ${{ matrix.target }}
-    # FIX: Use the matrix OS dynamically so x86_64 runs on an Intel machine
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            os: macos-latest             # Runs on ARM64 Apple Silicon Mac
-            pkg_config_path: "/opt/homebrew/lib/pkgconfig"
-          - target: x86_64-apple-darwin
-            os: macos-13                 # Runs natively on Intel Mac to avoid Rosetta errors
-            pkg_config_path: "/usr/local/lib/pkgconfig"
-    
+    name: Build x86_64-apple-darwin
+    runs-on: macos-latest # Runs on fast Apple Silicon runner to avoid Intel queues
     steps:
       - uses: actions/checkout@v4
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-apple-darwin
       
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ matrix.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: macos-latest-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ matrix.os }}-cargo-registry-
+            macos-latest-cargo-registry-
       
       - name: Cache cargo index
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
-          key: ${{ matrix.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          key: macos-latest-cargo-git-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ matrix.os }}-cargo-git-
+            macos-latest-cargo-git-
       
       - name: Cache cargo build
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ matrix.os }}-cargo-build-target-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          key: macos-latest-cargo-build-target-x86_64-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ matrix.os }}-cargo-build-target-${{ matrix.target }}-
+            macos-latest-cargo-build-target-x86_64-
 
-      # FIX: Run native Homebrew installs corresponding to each runner architecture
-      - name: Install system dependencies
+      - name: Install system dependencies (x86_64 via Rosetta)
         run: |
-          brew install libvpx pkg-config
-      
-      - name: Build (${{ matrix.target }})
-        env:
-          PKG_CONFIG_PATH: ${{ matrix.pkg_config_path }}
-        run: |
-          cargo build --release --lib --target ${{ matrix.target }}
-      
-      - name: Verify library (${{ matrix.target }})
-        run: |
-          file target/${{ matrix.target }}/release/libgrimmod.dylib
-          otool -L target/${{ matrix.target }}/release/libgrimmod.dylib || true
-      
-      - name: Upload artifact (${{ matrix.target }})
-        uses: actions/upload-artifact@v4
-        with:
-          name: libgrimmod-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/libgrimmod.dylib
-          retention-days: 30
-
-  create-universal-binary:
-    needs: build
-    runs-on: macos-latest
-    if: success()
-    
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-      
-      - name: Create universal binary
-        run: |
-          mkdir -p universal
-          lipo -create \
-            artifacts/libgrimmod-aarch64-apple-darwin/libgrimmod.dylib \
-            artifacts/libgrimmod-x86_64-apple-darwin/libgrimmod.dylib \
-            -output universal/libgrimmod.dylib
+          # Ensure Rosetta 2 is active
+          softwareupdate --install-rosetta --agree-to-license || true
           
-          # Verify that the created file contains both arm64 and x86_64 architectures
-          file universal/libgrimmod.dylib
+          # Install isolated Intel Homebrew inside /usr/local
+          sudo mkdir -p /usr/local/Homebrew
+          curl -L https://github.com/Homebrew/brew/tarball/master | sudo tar xz --strip-components 1 -C /usr/local/Homebrew
+          sudo ln -sf /usr/local/Homebrew/bin/brew /usr/local/bin/brew
+          
+          # Install Intel-compatible libvpx and pkg-config
+          arch -x86_64 /usr/local/bin/brew install libvpx pkg-config
       
-      - name: Upload universal binary
+      - name: Build (x86_64-apple-darwin)
+        env:
+          PKG_CONFIG_PATH: "/usr/local/lib/pkgconfig"
+        run: |
+          cargo build --release --lib --target x86_64-apple-darwin
+      
+      - name: Verify library (x86_64-apple-darwin)
+        run: |
+          file target/x86_64-apple-darwin/release/libgrimmod.dylib
+          otool -L target/x86_64-apple-darwin/release/libgrimmod.dylib || true
+      
+      - name: Upload artifact (x86_64-apple-darwin)
         uses: actions/upload-artifact@v4
         with:
-          name: libgrimmod-universal
-          path: universal/libgrimmod.dylib
+          name: libgrimmod-x86_64-apple-darwin
+          path: target/x86_64-apple-darwin/release/libgrimmod.dylib
           retention-days: 30
-  
+
   release:
-    needs: create-universal-binary
+    needs: build
     runs-on: macos-latest
     if: startsWith(github.ref, 'refs/tags/v')
     
@@ -123,9 +91,6 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            artifacts/libgrimmod-aarch64-apple-darwin/libgrimmod.dylib
-            artifacts/libgrimmod-x86_64-apple-darwin/libgrimmod.dylib
-            artifacts/libgrimmod-universal/libgrimmod.dylib
+          files: artifacts/libgrimmod-x86_64-apple-darwin/libgrimmod.dylib
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
