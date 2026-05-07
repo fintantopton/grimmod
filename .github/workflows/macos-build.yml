@@ -1,0 +1,105 @@
+name: macOS Build (Intel x86_64 Only)
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build x86_64-apple-darwin
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      # rust-toolchain.toml overrides to nightly, so we must add the target there too
+      - name: Add x86_64 target to nightly toolchain
+        run: rustup target add x86_64-apple-darwin --toolchain nightly
+      
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: macos-latest-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            macos-latest-cargo-registry-
+      
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: macos-latest-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            macos-latest-cargo-git-
+      
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: macos-latest-cargo-build-target-x86_64-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            macos-latest-cargo-build-target-x86_64-
+
+      - name: Install system dependencies (x86_64 via Rosetta)
+        run: |
+          # Ensure Rosetta 2 is active
+          softwareupdate --install-rosetta --agree-to-license || true
+          
+          # Download Intel Homebrew into /usr/local
+          sudo mkdir -p /usr/local/Homebrew
+          curl -L https://github.com/Homebrew/brew/tarball/master | sudo tar xz --strip-components 1 -C /usr/local/Homebrew
+          sudo ln -sf /usr/local/Homebrew/bin/brew /usr/local/bin/brew
+          
+          # Fix ownership of the ENTIRE /usr/local tree so brew can write anywhere it needs
+          sudo chown -R runner /usr/local
+          
+          # Install x86_64 libvpx and pkg-config under Rosetta
+          arch -x86_64 /usr/local/bin/brew install libvpx pkg-config
+      
+      - name: Build (x86_64-apple-darwin)
+        env:
+          PKG_CONFIG_PATH: "/usr/local/lib/pkgconfig"
+          # Force cargo to use the x86_64 pkg-config, not the arm64 one
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          # Tell pkg-config to use the x86_64 sysroot
+          PKG_CONFIG_SYSROOT_DIR: "/"
+        run: |
+          cargo build --release --lib --target x86_64-apple-darwin
+      
+      - name: Verify library (x86_64-apple-darwin)
+        run: |
+          file target/x86_64-apple-darwin/release/libgrimmod.dylib
+          otool -L target/x86_64-apple-darwin/release/libgrimmod.dylib || true
+      
+      - name: Upload artifact (x86_64-apple-darwin)
+        uses: actions/upload-artifact@v4
+        with:
+          name: libgrimmod-x86_64-apple-darwin
+          path: target/x86_64-apple-darwin/release/libgrimmod.dylib
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: macos-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/libgrimmod-x86_64-apple-darwin/libgrimmod.dylib
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
