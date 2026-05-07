@@ -20,6 +20,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-apple-darwin
+
+      # rust-toolchain.toml overrides to nightly, so we must add the target there too
+      - name: Add x86_64 target to nightly toolchain
+        run: rustup target add x86_64-apple-darwin --toolchain nightly
       
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -64,6 +68,10 @@ jobs:
       - name: Build (x86_64-apple-darwin)
         env:
           PKG_CONFIG_PATH: "/usr/local/lib/pkgconfig"
+          # Force cargo to use the x86_64 pkg-config, not the arm64 one
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          # Tell pkg-config to use the x86_64 sysroot
+          PKG_CONFIG_SYSROOT_DIR: "/"
         run: |
           cargo build --release --lib --target x86_64-apple-darwin
       
