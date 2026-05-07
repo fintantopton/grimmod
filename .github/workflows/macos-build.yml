@@ -55,11 +55,8 @@ jobs:
           curl -L https://github.com/Homebrew/brew/tarball/master | sudo tar xz --strip-components 1 -C /usr/local/Homebrew
           sudo ln -sf /usr/local/Homebrew/bin/brew /usr/local/bin/brew
           
-          # Create and fix ALL directories brew needs to write to
-          sudo mkdir -p /usr/local/var/homebrew/locks
-          sudo chown -R runner /usr/local/var
-          sudo chown -R runner /usr/local/Homebrew
-          sudo chown -R runner /usr/local/bin
+          # Fix ownership of the ENTIRE /usr/local tree so brew can write anywhere it needs
+          sudo chown -R runner /usr/local
           
           # Install x86_64 libvpx and pkg-config under Rosetta
           arch -x86_64 /usr/local/bin/brew install libvpx pkg-config
