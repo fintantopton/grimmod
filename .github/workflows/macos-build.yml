@@ -15,7 +15,6 @@ jobs:
     strategy:
       matrix:
         target:
-          - x86_64-apple-darwin
           - aarch64-apple-darwin
     
     steps:
@@ -80,7 +79,6 @@ jobs:
         run: |
           mkdir -p universal
           lipo -create \
-            artifacts/libgrimmod-x86_64-apple-darwin/libgrimmod.dylib \
             artifacts/libgrimmod-aarch64-apple-darwin/libgrimmod.dylib \
             -output universal/libgrimmod.dylib
           file universal/libgrimmod.dylib
@@ -106,7 +104,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/libgrimmod-x86_64-apple-darwin/libgrimmod.dylib
             artifacts/libgrimmod-aarch64-apple-darwin/libgrimmod.dylib
             artifacts/libgrimmod-universal/libgrimmod.dylib
         env:
